@@ -17,6 +17,7 @@ A connection can go through an SSH tunnel (ssh_tunnel.py). Its database host/por
 as seen from the SSH server, e.g. localhost:5432.
 """
 import math
+import logging
 import os
 import re
 import threading
@@ -53,6 +54,8 @@ _env_dsn = os.getenv("DATABASE_URL", "").strip()
 def available():
     return psycopg is not None
 
+
+log = logging.getLogger("datasquint.db")
 
 # ---------------------------------------------------------------- connection configs
 def _env_config():
@@ -249,7 +252,23 @@ def status(cid):
             st["ssh"].update(ssh_tunnel.state(c["ssh"], *_remote(c["dsn"])))
     except Exception as e:
         st["error"] = str(e).strip()
+    _log_state(c["name"], cid, st.get("error"))
     return st
+
+
+_last_state = {}
+
+
+def _log_state(name, cid, error):
+    """Log a connection failing or recovering (only changes, since the page checks often)."""
+    before = _last_state.get(cid, None)
+    if error == before:
+        return
+    _last_state[cid] = error
+    if error:
+        log.warning("Database %s unavailable: %s", name, error)
+    elif before:
+        log.info("Database %s reachable again", name)
 
 
 # ---------------------------------------------------------------- schema

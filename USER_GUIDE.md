@@ -98,7 +98,7 @@ The **Send** button waits until all uploads finish. Click a chip's **✕** to re
 
 | You can attach | Up to | The AI gets |
 |---|---|---|
-| CSV, TSV, Excel (.xlsx) | 200 MB each | A table it can query, plus a short preview |
+| CSV, TSV, Excel (.xlsx, .xlsm) | 200 MB each | A table it can query, plus a short preview |
 | PDF, Word, text, code, JSON | 20 MB each | The text of the file |
 | Images (JPG, PNG, GIF, WebP, BMP) | 20 MB each | The picture (if the model supports images) |
 | Zip files | 20 MB | Every supported file inside |
@@ -231,7 +231,9 @@ Only attach files and connect data you're allowed to send to the AI provider you
 
 **My chats disappeared.** You're probably at a different address, in a private window, or browsing data was cleared. Try the address you used before, or import your last export.
 
-**A CSV shows only its size, not "table, N rows".** It couldn't be read as a table. Check that it's a real CSV with a header row; if it is, ask your administrator: tables may be turned off on this server (`FILE_TABLES=0`), or DuckDB may not be installed. When tables are off, CSV and Excel files are limited to 20 MB and the AI reads them as text instead of querying them.
+**A file's chip says "⚠ read as text, not a table".** Datasquint couldn't load it as a table, so the AI only reads its text (and long files are cut short). Hover over the chip, or read the notice that popped up, for the reason. Common ones: the workbook is password-protected (remove the password in Excel), it's an old `.xls` file renamed to `.xlsx` (save it as `.xlsx` or CSV), or tables are turned off or not installed on the server (ask your administrator).
+
+**A file's chip says "⚠ 2 notes".** It loaded, but something needed special handling, such as a sheet that couldn't be read or columns loaded as text. Hover over the chip to see what.
 
 **"Over the 200 MB limit".** Split the file, or ask your administrator to raise the limit.
 
@@ -250,5 +252,7 @@ Only attach files and connect data you're allowed to send to the AI provider you
 **Where did a file I removed go?** If you ticked *Also delete it from the server*, it's gone. Otherwise it's still in **Storage**, where you can delete it later.
 
 **Where did pgPeek go?** It's the same app under a new name, Datasquint, chosen because it now works with files as well as databases. Your chats and colour theme come across automatically when you open Datasquint at the same address as before, and exports from pgPeek import as they are.
+
+**Something went wrong. What should I tell my administrator?** The time it happened and what you were doing. Datasquint writes every error to a log on the server, including error messages you saw on screen, so your administrator can find the exact cause from the time.
 
 **Which version of Datasquint is this?** It's shown at the bottom of the sidebar and at the end of this guide. The README's changelog lists what changed in each version.

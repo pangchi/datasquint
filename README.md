@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.2.0** · [Changelog](CHANGELOG.md)
+**Version 2.4.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -26,6 +26,7 @@ Ask questions about your PostgreSQL databases and your CSV and Excel files in pl
 - [Large requests](#large-requests)
 - [Saving, exporting and importing chats](#saving-exporting-and-importing-chats)
 - [Configuration](#configuration)
+- [Error log](#error-log)
 - [Troubleshooting](#troubleshooting)
 - [Project layout](#project-layout)
 - [API](#api)
@@ -173,7 +174,7 @@ Attach files with the paperclip, by dragging them onto the window, or by pasting
 |---|---|---|
 | Images | JPG/JPEG, PNG, GIF, WebP, BMP | Images (needs a vision-capable model). BMP is converted to PNG. |
 | Documents | PDF, Word (.docx), TXT, MD | Text. Word tables are included. Scanned PDFs need OCR first. |
-| Data | CSV, TSV, Excel (.xlsx) | **SQL tables** the model queries (see [Querying CSV and Excel files](#querying-csv-and-excel-files)), plus a short preview. Without DuckDB installed: the full text, each Excel sheet as a CSV block. |
+| Data | CSV, TSV, Excel (.xlsx, .xlsm) | **SQL tables** the model queries (see [Querying CSV and Excel files](#querying-csv-and-excel-files)), plus a short preview. Without DuckDB installed: the full text, each Excel sheet as a CSV block. |
 | Data | JSON, YAML, XML | Text. |
 | Code | Python, JavaScript, HTML, CSS, C/C++, Java, Go, Rust and ~40 more, plus Dockerfile and Makefile | Text |
 | Archives | ZIP | Each file inside, handled by the rules above |
@@ -230,7 +231,15 @@ Disk use per file is the original (kept so it can be opened from the chat) plus 
 
 **Turning it off**: set `FILE_TABLES=0` in `.env` and restart to stop CSV/TSV/Excel being loaded into DuckDB (and so disallow large ones); see [Configuration](#configuration).
 
-**Limits**: CSV/TSV/Excel up to `MAX_TABLE_UPLOAD_MB` (200 MB), other files up to `MAX_UPLOAD_MB` (20 MB). A CSV that can't be read as a table falls back to text, and then the 20 MB limit applies. Excel allows about a million rows per sheet; bigger data needs several sheets or a CSV. CSV and Excel files inside a zip are sent as text, not tables; attach them directly to query them. Excel formulas give their last saved values (see [Attaching files](#attaching-files)).
+**Always a table, unless it really can't be.** CSV, TSV and Excel files are loaded into DuckDB by default, and the loader works hard not to give up:
+
+- Each Excel sheet is read with `python-calamine`; if that fails for a sheet, that sheet is read again with `openpyxl`. A sheet neither can read is skipped and reported, and the other sheets still load.
+- If DuckDB can't read a file with its normal settings, it tries more forgiving ones in turn: lenient parsing and very long lines; then **every column as text** (the model is told, and casts in SQL); then skipping malformed lines. Each fallback is reported.
+- Excel error cells (`#N/A`, `#DIV/0!`…) become empty values, and date-times at midnight become dates, the same whichever reader was used.
+
+If a file still can't become a table, it's read as text instead (under the 20 MB limit) and **its chip says why**, with a ⚠ and a notice: for example a password-protected workbook, an old `.xls` renamed to `.xlsx`, `FILE_TABLES=0`, or DuckDB not installed on the server. Partial problems (a skipped sheet, text-only columns) show as *⚠ N notes* on the chip; hover to read them.
+
+**Limits**: CSV/TSV/Excel up to `MAX_TABLE_UPLOAD_MB` (200 MB), other files up to `MAX_UPLOAD_MB` (20 MB). A file that ends up read as text has the 20 MB limit. Excel allows about a million rows per sheet; bigger data needs several sheets or a CSV. CSV and Excel files inside a zip are sent as text, not tables; attach them directly to query them. Excel formulas give their last saved values (see [Attaching files](#attaching-files)).
 
 ## Browsing tables
 
@@ -393,13 +402,45 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 |---|---|---|
 | `PORT` | `5000` | Port the web page is served on. Set e.g. `PORT=8080` if 5000 is taken, then open `http://localhost:8080`. Startup stops with a clear message if the port is invalid or already in use. Chats are saved per address, so changing the port starts with an empty chat list: export first and import after (see [Where chats are kept](#where-chats-are-kept)). |
 | `HOST` | `127.0.0.1` | `127.0.0.1` serves this computer only; `HOST=0.0.0.0` opens it to your network; see [Security](#security) |
+| `LOG_FILE` | `./logs/datasquint.log` | Error log file (see [Error log](#error-log)) |
+| `LOG_LEVEL` | `INFO` | `ERROR`, `WARNING`, `INFO` (adds one line per upload, query and reply) or `DEBUG` |
+| `LOG_MAX_MB` / `LOG_BACKUPS` | `10` / `5` | Rotate the log at this size, keeping this many old files |
 | `FLASK_DEBUG` | `0` | `1` turns on Flask's debug mode (auto-reload on code changes, in-browser debugger) for development only. Never combine it with `HOST=0.0.0.0`: the debugger can run code. |
 
 ### Dependencies
 
 `flask`, `openai` and `python-dotenv` are required. The rest each enable one feature, and the app explains what to install if one is missing: `psycopg[binary]` (PostgreSQL), `duckdb` (SQL over CSV/Excel files), `python-calamine` (fast Excel loading), `cryptography` (saved connections), `paramiko` (SSH), `pypdf` (PDF), `python-docx` (Word), `openpyxl` (Excel), `Pillow` (BMP).
 
+## Error log
+
+Datasquint keeps a log of what goes wrong, so problems can be traced afterwards: **`logs/datasquint.log`** in the app folder (startup prints the full path as ` * Error log: …`).
+
+```
+2026-10-11 01:19:21 WARNING datasquint.upload [10.0.0.7 POST /api/upload]: Q3.xlsx (2,104,331 bytes) not loaded as a table: This isn't a readable .xlsx file. It may be password-protected …
+2026-10-11 01:19:22 WARNING datasquint.query [10.0.0.7 POST /api/db/query]: Query failed: Binder Error: Referenced column "nope" not found … | SQL: SELECT nope FROM mixed_plain
+2026-10-11 01:19:25 ERROR   datasquint.chat [10.0.0.7 POST /api/chat]: Reply from gpt-4o-mini failed after 1.4 s (2 chars sent): APIConnectionError: Connection error.
+```
+
+Each line has the time, level, the part of the app (`upload`, `files`, `query`, `db`, `chat`, `browser`, `web`) and, for web requests, the client address and the page or API call. What's recorded:
+
+| Level | What |
+|---|---|
+| ERROR | Anything unexpected, with the full Python traceback (the page gets a short message instead of a crash); AI provider failures (bad key, unknown model, rate limits, connection errors) |
+| WARNING | CSV/Excel files not loaded as tables (and why) or loaded with notes; failed queries, CSV downloads and table previews, with the SQL; databases becoming unreachable (once per change, not on every check); uploads or deletes that failed; **errors in the browser**: JavaScript errors and every red error message a user was shown |
+| INFO | Startup; one line per upload (size, tables, rows), query (rows, time) and AI reply (model, size, time); fallbacks the file loader used; databases reachable again |
+
+- **Secrets are masked** before anything is written: passwords in connection strings and `password=` settings, API keys (`sk-…`, `api_key=`), bearer tokens and private keys.
+- The file **rotates** at `LOG_MAX_MB` (10 MB), keeping `LOG_BACKUPS` (5) old files: `datasquint.log.1` … `.5`, so it never grows without limit.
+- WARNING and ERROR lines are also printed in the console window.
+- `LOG_LEVEL=WARNING` keeps only problems; `DEBUG` adds more detail. `LOG_FILE` moves it.
+- On the server itself, `http://localhost:<PORT>/api/logs?lines=200` shows the end of the log. It's refused from other computers, since the log contains SQL and file names.
+- The log contains SQL text, table and file names and error messages, but not query results or file contents. `logs/` is in `.gitignore`.
+
+When reporting a problem, note the time it happened and look for lines around that time.
+
 ## Troubleshooting
+
+First look in the [error log](#error-log) for lines from the time it happened; they usually say exactly what failed.
 
 | Message | What to do |
 |---|---|
@@ -435,6 +476,7 @@ templates/index.html The whole web UI (HTML, CSS and JS in one file)
 USER_GUIDE.md        Guide for everyday users; served in the app at /guide (Help link)
 CHANGELOG.md         What changed in each version
 version.py           The version number (single place to change it)
+logsetup.py          Error log: rotating file, secret masking, request details
 requirements.txt
 env.example          Settings template: copy it to .env and fill it in
 .gitignore           Keeps .env, keys, the connection store and uploads out of git
@@ -475,6 +517,8 @@ All responses are JSON unless noted.
 - `GET /api/fs/keys[?path=]` — one folder for the key picker: `{path, root, parent, dirs: [{name, path}], files: [{name, path, size, kind}], user, host}`, where `kind` is `private`, `public`, `ppk`, `other` or `unreadable`. 403 outside `KEY_BROWSE_ROOT` or when it's `off`.
 - `POST /api/tables` — `{dbs, files, refresh?}`; returns `{sources: [{id, name, kind: "files"|"db", error?, tables: [{name, rows, columns: [[name, type]], file?, sheet?, title?, schema?, view?}]}]}`
 - `POST /api/tables/preview` — `{source, table, dbs, files, offset, limit (≤200), sort?, desc?, q?}`; returns `{columns, rows, offset, limit, total, estimate, ms, sql}` or `{error}` with 400. `source` is `files` or a connection id; `table` must be one `/api/tables` listed.
+- `POST /api/log` — `{kind, message, source?, line?, stack?}` from the page (JavaScript errors and error messages shown to the user) into the server log; at most 30 a minute per client
+- `GET /api/logs?lines=200` — the end of the log as text; only from the server itself (403 otherwise)
 - `POST /api/script` — `{title, queries: [{sql, title?}], dbs, files}`; returns a `text/x-python` attachment with header `X-Queries` (queries included), or `{error}` with 400 when none can be resolved.
 - `POST /api/db/export` — same body as `/api/db/query`; returns the full result as `text/csv` (UTF-8 with BOM), up to `DB_EXPORT_MAX_ROWS`, with headers `X-Row-Count`, `X-Truncated` (`1` if cut off) and `X-Max-Rows`; `{error}` with 400 on failure
 - `POST /api/db/query` — `{sql, dbs, files}` (`files`: the chat's attachment ids in message order; CSV/Excel ones become the `files` source) → `{db_id, db_name, columns, rows, row_count, truncated, ms, text}` or `{error, text}`; `text` is what the model receives

@@ -1,0 +1,2001 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Datasquint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+/* colour theme: applied before the page draws so it doesn't flash */
+try { const old = localStorage.getItem("pgpeek.theme");   // saved under the old name (pgPeek): move it once
+  if (old !== null) { if (!localStorage.getItem("datasquint.theme")) localStorage.setItem("datasquint.theme", old); localStorage.removeItem("pgpeek.theme"); } } catch (e) {}
+try { const t = JSON.parse(localStorage.getItem("datasquint.theme") || "{}"), r = document.documentElement;
+  if (t.mode === "light" || t.mode === "dark") r.dataset.mode = t.mode;
+  if (t.accent && t.accent !== "teal") r.dataset.accent = t.accent; } catch (e) {}
+</script>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --side:#1c2733; --side-ink:#c9d3dd; --side-hi:#2a3846;
+  --ink:#1b2430; --muted:#66727f; --line:#dfe3e8; --accent:#2f6f8f; --accent-ink:#fff;
+  --user:color-mix(in srgb,var(--accent) 11%,#fff); --danger:#b4443a; color-scheme:light;
+  --font:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-mode=light]) .swatch{background:var(--sw-d)}}
+:root[data-mode=dark] .swatch{background:var(--sw-d)}
+/* colour themes: mode = data-mode on <html> (light | dark | none = follow the system), colour = data-accent */
+@media (prefers-color-scheme:dark){:root:not([data-mode=light]){
+  --bg:#141a21; --panel:#1a222b; --side:#0f141a; --side-ink:#a9b6c3; --side-hi:#1e2833;
+  --ink:#e3e8ee; --muted:#8c99a6; --line:#2a3440; --accent:#5ba3c6; --accent-ink:#0f141a;
+  --user:color-mix(in srgb,var(--accent) 16%,#1a222b); --danger:#e07a70; color-scheme:dark;
+}}
+:root[data-mode=dark]{
+  --bg:#141a21; --panel:#1a222b; --side:#0f141a; --side-ink:#a9b6c3; --side-hi:#1e2833;
+  --ink:#e3e8ee; --muted:#8c99a6; --line:#2a3440; --accent:#5ba3c6; --accent-ink:#0f141a;
+  --user:color-mix(in srgb,var(--accent) 16%,#1a222b); --danger:#e07a70; color-scheme:dark;
+}
+:root[data-accent=blue]{--accent:#2f5fb3;--side:#1a2338;--side-hi:#28344f}
+@media (prefers-color-scheme:dark){:root:not([data-mode=light])[data-accent=blue]{--accent:#7aa2ea;--side:#0f1420;--side-hi:#1c2638}}
+:root[data-mode=dark][data-accent=blue]{--accent:#7aa2ea;--side:#0f1420;--side-hi:#1c2638}
+:root[data-accent=violet]{--accent:#6a4fb3;--side:#241e38;--side-hi:#342c4f}
+@media (prefers-color-scheme:dark){:root:not([data-mode=light])[data-accent=violet]{--accent:#a890ec;--side:#14111f;--side-hi:#241f36}}
+:root[data-mode=dark][data-accent=violet]{--accent:#a890ec;--side:#14111f;--side-hi:#241f36}
+:root[data-accent=green]{--accent:#2f7d55;--side:#18291f;--side-hi:#25392d}
+@media (prefers-color-scheme:dark){:root:not([data-mode=light])[data-accent=green]{--accent:#62c08d;--side:#0e1612;--side-hi:#1b2a21}}
+:root[data-mode=dark][data-accent=green]{--accent:#62c08d;--side:#0e1612;--side-hi:#1b2a21}
+:root[data-accent=amber]{--accent:#9c5a14;--side:#2b2219;--side-hi:#3d3125}
+@media (prefers-color-scheme:dark){:root:not([data-mode=light])[data-accent=amber]{--accent:#e2a356;--side:#17120d;--side-hi:#2a2118}}
+:root[data-mode=dark][data-accent=amber]{--accent:#e2a356;--side:#17120d;--side-hi:#2a2118}
+:root[data-accent=rose]{--accent:#b03a5b;--side:#2d1c24;--side-hi:#402833}
+@media (prefers-color-scheme:dark){:root:not([data-mode=light])[data-accent=rose]{--accent:#ea7f9c;--side:#170f13;--side-hi:#2a1c22}}
+:root[data-mode=dark][data-accent=rose]{--accent:#ea7f9c;--side:#170f13;--side-hi:#2a1c22}
+:root[data-accent=graphite]{--accent:#4a5563;--side:#1f2329;--side-hi:#2e333b}
+@media (prefers-color-scheme:dark){:root:not([data-mode=light])[data-accent=graphite]{--accent:#a9b3bf;--side:#111317;--side-hi:#1f2329}}
+:root[data-mode=dark][data-accent=graphite]{--accent:#a9b3bf;--side:#111317;--side-hi:#1f2329}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font:15px/1.6 var(--font);color:var(--ink);background:var(--bg);display:flex;overflow:hidden}
+button,select,textarea,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* sidebar */
+aside{width:260px;flex:none;background:var(--side);color:var(--side-ink);display:flex;flex-direction:column;padding:12px;gap:8px;transition:margin .2s}
+aside.hidden{margin-left:-260px}
+.newchat{display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--side-hi);border-radius:8px;background:none;cursor:pointer;color:#fff}
+.newchat:hover{background:var(--side-hi)}
+#chatList{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:4px}
+.item{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:14px}
+.item:hover,.item.active{background:var(--side-hi);color:#fff}
+.item span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item button{opacity:0;background:none;border:0;cursor:pointer;color:inherit;padding:2px 4px}
+.item:hover button,.item.active button{opacity:.7}
+.item button:hover{opacity:1}
+.sidefoot{border-top:1px solid var(--side-hi);padding-top:8px;font-size:13px}
+.sidefoot button{width:100%;text-align:left;background:none;border:0;padding:8px 10px;border-radius:6px;cursor:pointer;color:var(--side-ink);display:flex;align-items:center;gap:10px}
+.sidefoot .ico{flex:none;opacity:.85}
+.sidefoot button:hover{background:var(--side-hi);color:#fff}
+
+/* main */
+main{flex:1;display:flex;flex-direction:column;min-width:0}
+header{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+.iconbtn{background:none;border:0;cursor:pointer;padding:6px;border-radius:6px;color:var(--muted);display:grid;place-items:center}
+.iconbtn:hover{background:var(--bg);color:var(--ink)}
+select{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;max-width:260px}
+#title{flex:1;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font-size:14px}
+
+#scroll{flex:1;overflow-y:auto}
+#messages{max-width:780px;margin:0 auto;padding:24px 20px 40px}
+.empty{height:100%;display:grid;place-items:center;text-align:center;color:var(--muted)}
+.empty h1{font-weight:500;color:var(--ink);font-size:26px;margin:0 0 6px}
+.msg{margin:0 0 22px;display:flex;flex-direction:column}
+.msg.user{align-items:flex-end}
+.msg.user .bubble{background:var(--user);padding:10px 14px;border-radius:16px 16px 4px 16px;max-width:85%;white-space:pre-wrap;word-wrap:break-word}
+.msg.assistant .bubble{max-width:100%;word-wrap:break-word}
+.bubble>:first-child{margin-top:0}.bubble>:last-child{margin-bottom:0}
+.bubble pre{position:relative;background:#0d1117;color:#e6edf3;border-radius:8px;padding:14px;overflow-x:auto;font:13px/1.5 var(--mono)}
+.bubble pre:has(.codebar){padding-top:38px}
+.bubble pre code.hljs{padding:0;background:transparent}
+.dlcsv{margin-left:8px;font-size:12px;background:none;border:1px solid var(--line);border-radius:5px;padding:1px 8px;cursor:pointer;color:var(--ink)}
+.dlcsv:hover{border-color:var(--accent);color:var(--accent)}
+.dlcsv:disabled{opacity:.5;cursor:default}
+.bubble code{font-family:var(--mono);font-size:.9em}
+.bubble :not(pre)>code{background:var(--user);padding:1px 5px;border-radius:4px}
+.bubble table{border-collapse:collapse;display:block;overflow-x:auto}
+.bubble th,.bubble td{border:1px solid var(--line);padding:6px 10px}
+.bubble blockquote{border-left:3px solid var(--line);margin-left:0;padding-left:12px;color:var(--muted)}
+.codebar{position:absolute;top:6px;right:6px;display:flex;gap:6px;align-items:center}
+.copycode,.dlcode{font-size:12px;background:#2b333d;color:#cdd5de;border:0;border-radius:4px;padding:3px 8px;cursor:pointer}
+.copycode:hover,.dlcode:hover{background:#3a4552;color:#fff}
+.tools{display:flex;gap:2px;margin-top:4px;opacity:.6}
+.msg:hover .tools{opacity:1}
+.tools button{background:none;border:0;cursor:pointer;color:var(--muted);font-size:12px;padding:3px 7px;border-radius:4px}
+.tools button:hover{background:var(--line);color:var(--ink)}
+.error{color:var(--danger)}
+.status{font-size:13px;color:var(--muted);margin-bottom:4px}
+.status:empty{display:none}
+.partsnote{font-size:12px;color:var(--muted);padding:3px 7px}
+.cursor::after{content:"▍";animation:blink 1s steps(2) infinite;color:var(--accent)}
+@keyframes blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.cursor::after{animation:none}aside{transition:none}}
+
+/* composer */
+.composer{padding:12px 20px 18px;background:linear-gradient(transparent,var(--bg) 30%)}
+.box{max-width:780px;margin:0 auto;display:flex;align-items:flex-end;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:8px 8px 8px 14px}
+.box:focus-within{border-color:var(--accent)}
+#input:focus-visible{outline:none}
+textarea{flex:1;border:0;outline:0;resize:none;background:none;max-height:40vh;padding:6px 0;line-height:1.5}
+#send{flex:none;width:36px;height:36px;border-radius:9px;border:0;background:var(--accent);color:var(--accent-ink);cursor:pointer;display:grid;place-items:center}
+#send:disabled{opacity:.35;cursor:default}
+.hint{max-width:780px;margin:6px auto 0;font-size:12px;color:var(--muted);text-align:center}
+
+/* attachments */
+#attachBtn{flex:none;align-self:flex-end;margin-bottom:2px}
+#pending{max-width:780px;margin:0 auto 8px;display:flex;flex-wrap:wrap;gap:6px}
+#pending:empty{display:none}
+.chip{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px 6px 5px 5px;font-size:13px;max-width:240px}
+.chip img,.chip .ficon{width:34px;height:34px;border-radius:6px;object-fit:cover;flex:none}
+.chip .ficon{display:grid;place-items:center;background:var(--user);color:var(--accent);font:600 10px var(--mono)}
+.chip .meta{min-width:0;line-height:1.3}
+.chip .meta b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip .meta small{color:var(--muted)}
+.chip.err{border-color:var(--danger)}.chip.err small{color:var(--danger)}
+.chip button{background:none;border:0;cursor:pointer;color:var(--muted);padding:2px 4px}
+.chip button:hover{color:var(--ink)}
+.msgatts{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;margin-bottom:6px;max-width:85%}
+.msgatts a{color:inherit;text-decoration:none}
+.msgatts img{max-width:220px;max-height:180px;border-radius:10px;border:1px solid var(--line);display:block}
+#drop{position:fixed;inset:0;z-index:20;display:none;place-items:center;background:color-mix(in srgb,var(--accent) 18%,transparent);border:3px dashed var(--accent);font-size:20px;font-weight:500;color:var(--ink);pointer-events:none}
+#drop.on{display:grid}
+
+/* database */
+.dbwrap{position:relative}
+.caret{font-size:10px;opacity:.6}
+#dbMenu{position:absolute;top:calc(100% + 6px);left:0;z-index:15;min-width:260px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:6px}
+#dbMenu label{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;cursor:pointer;font-size:14px;margin:0;color:var(--ink)}
+#dbMenu label:hover{background:var(--bg)}
+#dbMenu small{color:var(--muted);margin-left:auto;font-size:12px}
+#dbMenu .sep{border-top:1px solid var(--line);margin:6px 0}
+#dbMenu button{width:100%;text-align:left;background:none;border:0;padding:7px 8px;border-radius:6px;cursor:pointer;font-size:14px;color:var(--accent)}
+#dbMenu button:hover{background:var(--bg)}
+#dbMenu .empty{padding:8px;color:var(--muted);font-size:13px}
+.sdot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+.sdot.ok{background:#3a9a5b}.sdot.bad{background:var(--danger)}
+#dbDialog{width:min(900px,95vw)}
+.dbgrid{display:grid;grid-template-columns:220px 1fr;gap:16px;height:min(640px,calc(92vh - 140px))}
+.dbform{overflow-y:auto;padding:0 6px 4px 2px}
+.dbside{overflow-y:auto}
+.dbside{display:flex;flex-direction:column;gap:6px;border-right:1px solid var(--line);padding-right:12px}
+#connList{display:flex;flex-direction:column;gap:2px}
+.conn{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;cursor:pointer;font-size:14px}
+.conn:hover{background:var(--bg)}.conn.active{background:var(--user)}
+.conn span:not(.sdot){flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conn small{color:var(--muted);font-size:11px}
+#cContext{min-height:80px}
+.btn.danger{color:var(--danger)}
+@media (max-width:700px){.dbgrid{grid-template-columns:1fr;height:auto}.dbform{overflow:visible}.dbside{border-right:0;border-bottom:1px solid var(--line);padding:0 0 10px}}
+#dbToggle{display:none;align-items:center;gap:6px;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;color:var(--muted)}
+#dbToggle{display:flex}
+#dbToggle .dot{width:8px;height:8px;border-radius:50%;background:var(--line)}
+#dbToggle.on{border-color:var(--accent);color:var(--ink)}
+#dbToggle.on .dot{background:var(--accent)}
+#dbToggle.bad .dot{background:var(--danger)}
+.runsql{font-size:12px;background:var(--accent);color:var(--accent-ink);border:0;border-radius:4px;padding:3px 9px;cursor:pointer;font-weight:500}
+.runsql:disabled{opacity:.5;cursor:default}
+.msg.sql{align-items:stretch}
+.sqlcard{border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden;font-size:13px}
+.sqlcard+.sqlcard{margin-top:8px}
+.sqlhead{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line);background:var(--bg)}
+.sqlhead b{font-weight:600}.sqlhead small{color:var(--muted);margin-left:auto}
+.sqlcard details{padding:0 12px;border-bottom:1px solid var(--line)}
+.sqlcard summary{cursor:pointer;color:var(--muted);padding:6px 0}
+.sqlcard details pre{margin:0 0 8px;background:#0d1117;color:#e6edf3;border-radius:6px;padding:10px;overflow-x:auto;font:12px/1.5 var(--mono)}
+.tablewrap{overflow:auto;max-height:340px}
+.tablewrap table{border-collapse:collapse;width:100%;font:12px/1.4 var(--mono)}
+.tablewrap th{position:sticky;top:0;background:var(--panel);text-align:left;font-weight:600;border-bottom:1px solid var(--line)}
+.tablewrap th,.tablewrap td{padding:5px 10px;white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid var(--line)}
+.tablewrap td.null{color:var(--muted);font-style:italic}
+.sqlerr{padding:10px 12px;color:var(--danger);white-space:pre-wrap;font:12px/1.5 var(--mono)}
+.sqlnote{padding:6px 12px;color:var(--muted)}
+.check{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:14px;color:var(--ink)}
+.grid2{display:grid;grid-template-columns:2fr 1fr;gap:0 10px}
+dialog input[type=text],dialog input[type=password],dialog select.full{width:100%;border:1px solid var(--line);border-radius:6px;padding:7px 8px;background:var(--bg);max-width:none}
+#dbDialog{max-height:92vh;overflow:auto}
+#sshFields{border:1px solid var(--line);border-radius:8px;padding:2px 12px 12px;margin-top:8px}
+#sshFields[hidden]{display:none}
+#sshFields textarea{min-height:90px;font:12px/1.4 var(--mono)}
+.fieldnote{font-size:12px;color:var(--muted);margin-top:6px}
+#dbState{margin-top:12px;font-size:13px;padding:8px 10px;border-radius:6px;background:var(--bg)}
+#dbState.ok{color:var(--ink)}#dbState.err{color:var(--danger)}
+#dbSchema{max-height:200px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;font:12px/1.4 var(--mono);white-space:pre;margin:4px 0 0}
+.row .left{margin-right:auto}
+
+/* key picker */
+.pathrow{display:flex;gap:6px}.pathrow input{flex:1}
+#keyPicker{width:min(560px,92vw)}
+.kpbar{display:flex;align-items:center;gap:8px;margin:8px 0}
+.kpbar code{flex:1;font:12px var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;overflow-x:auto;white-space:nowrap}
+#kpUp{padding:4px 10px}#kpUp:disabled{opacity:.4;cursor:default}
+#kpList{border:1px solid var(--line);border-radius:8px;height:300px;overflow-y:auto}
+.kpitem{display:flex;align-items:center;gap:10px;padding:7px 10px;cursor:pointer;font-size:14px;border-bottom:1px solid var(--line)}
+.kpitem:last-child{border-bottom:0}
+.kpitem:hover{background:var(--bg)}
+.kpitem .ic{width:18px;text-align:center;flex:none}
+.kpitem .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kpitem .tag{font-size:11px;padding:1px 7px;border-radius:9px;background:var(--bg);color:var(--muted);flex:none}
+.kpitem .tag.private{background:color-mix(in srgb,#3a9a5b 18%,transparent);color:#2f7d4a}
+.kpitem.dim{opacity:.55;cursor:default}.kpitem.dim:hover{background:none}
+.kpmsg{padding:14px;color:var(--muted);font-size:13px}.kpmsg.err{color:var(--danger)}
+
+/* export / import */
+.expwrap{position:relative}
+#exportBtn:disabled{opacity:.35;cursor:default}
+#exportMenu{position:absolute;top:calc(100% + 6px);right:0;z-index:15;min-width:250px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:6px}
+#exportMenu button{display:block;width:100%;text-align:left;background:none;border:0;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:14px;color:var(--ink)}
+#exportMenu button:hover{background:var(--bg)}
+#exportMenu small{display:block;color:var(--muted);font-size:12px;margin-top:1px}
+#toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:30;max-width:min(560px,90vw);background:var(--ink);color:var(--panel);padding:10px 16px;border-radius:10px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+#toast.err{background:var(--danger);color:#fff}
+
+/* inline message editor */
+.msg.user.editing{align-items:stretch}
+.msg [hidden]{display:none!important}
+.editbox{border:1px solid var(--accent);border-radius:14px;background:var(--panel);padding:10px 12px}
+.editbox textarea{display:block;width:100%;min-height:72px;max-height:60vh;overflow-y:auto;resize:none;line-height:1.5;padding:2px 0}
+.editbar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.editbox:focus-within{box-shadow:0 0 0 1px var(--accent)}
+.editbox textarea:focus-visible{outline:none}
+.edithint{flex:1;font-size:12px;color:var(--muted);min-width:180px;text-align:left}
+.edithint.err{color:var(--danger)}
+
+.chip.warn small{color:#b7791f}
+/* sent attachments: remove button */
+.att{position:relative;display:inline-block}
+.att .rm{position:absolute;top:-7px;right:-7px;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--muted);font-size:11px;line-height:1;cursor:pointer;opacity:0;transition:opacity .15s;display:grid;place-items:center;padding:0}
+.att:hover .rm,.att .rm:focus-visible{opacity:1}
+.att .rm:hover{color:var(--danger);border-color:var(--danger)}
+@media (hover:none){.att .rm{opacity:.85}}
+.removed{font-size:12px;color:var(--muted);margin:-2px 0 6px;max-width:85%;text-align:right}
+.removed s{opacity:.8}
+/* confirm dialog */
+#askDlg{width:min(460px,92vw)}
+#askBody{white-space:pre-line;font-size:14px;color:var(--ink);margin-top:4px}
+#askNote{margin-top:8px}
+.btn.primary.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.btn.primary.danger:disabled{opacity:.4;cursor:default}
+/* table browser */
+.tbbtn{display:flex;align-items:center;gap:6px;background:none;border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer;color:var(--muted);font-size:13px}
+.tbbtn:hover{color:var(--ink);border-color:var(--accent)}
+#tablesDlg{width:min(1180px,96vw);height:min(86vh,900px);max-height:none;padding:0;overflow:hidden}
+#tablesDlg[open]{display:flex;flex-direction:column}
+.tbhead{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.tbhead h2{margin:0;flex:1}
+.tbbody{flex:1;display:grid;grid-template-columns:270px 1fr;min-height:0}
+.tblist{border-right:1px solid var(--line);overflow-y:auto;padding:10px}
+.tblist input{width:100%;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--bg);margin-bottom:8px}
+.tbsrc{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:12px 4px 4px}
+.tbsrc .err{display:block;text-transform:none;letter-spacing:0;font-weight:400;color:var(--danger);margin-top:2px}
+.tbitem{display:block;width:100%;text-align:left;background:none;border:0;border-radius:6px;padding:6px 8px;cursor:pointer;color:var(--ink)}
+.tbitem:hover{background:var(--bg)}
+.tbitem.sel{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.tbitem b{display:block;font:500 13px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbitem small{color:var(--muted);font-size:11px}
+.tbmain{display:flex;flex-direction:column;min-width:0;min-height:0;padding:14px 18px;gap:10px}
+.tbtitle{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.tbtitle h3{margin:0;font:600 16px var(--mono);word-break:break-all}
+.tbtitle .sub{color:var(--muted);font-size:12px;margin-top:2px}
+.tbtitle .acts{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.tbcols{display:flex;flex-wrap:wrap;gap:4px;max-height:64px;overflow-y:auto}
+.tbcols span{font:12px var(--mono);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:1px 6px}
+.tbcols i{font-style:normal;color:var(--muted)}
+.tbctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tbctl input{flex:1;min-width:180px;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--bg)}
+.tbgrid{flex:1;overflow:auto;border:1px solid var(--line);border-radius:8px;min-height:0}
+.tbgrid table{border-collapse:collapse;font-size:13px;width:max-content;min-width:100%}
+.tbgrid th{position:sticky;top:0;background:var(--panel);text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;white-space:nowrap;font-weight:600}
+.tbgrid th:hover{color:var(--accent)}
+.tbgrid th .ar{color:var(--accent);margin-left:4px}
+.tbgrid td{padding:4px 10px;border-bottom:1px solid var(--line);white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis}
+.tbgrid td.null{color:var(--muted);font-style:italic}
+.tbgrid td.num{text-align:right;font-variant-numeric:tabular-nums}
+.tbpager{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.tbpager .sp{flex:1}
+.tbempty{margin:auto;text-align:center;color:var(--muted);max-width:420px;line-height:1.6}
+@media (max-width:760px){.tbbody{grid-template-columns:1fr;grid-template-rows:38% 1fr}.tblist{border-right:0;border-bottom:1px solid var(--line)}}
+
+/* storage */
+#storageDlg{width:min(860px,95vw);max-height:92vh}
+.stbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;font-size:14px}
+.stbar span{flex:1;color:var(--muted)}
+#stFilter{flex:none;width:auto;max-width:100%}
+#stList{border:1px solid var(--line);border-radius:8px;max-height:min(460px,60vh);overflow:auto}
+.strow{display:grid;grid-template-columns:28px minmax(0,1fr) 90px 110px minmax(0,1fr) 34px;gap:10px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px}
+.strow:last-child{border-bottom:0}
+.strow.head{position:sticky;top:0;background:var(--panel);color:var(--muted);font-size:12px;z-index:1}
+.strow .nm b{display:block;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.strow .nm small{color:var(--muted)}
+.strow .num{text-align:right;font-variant-numeric:tabular-nums}
+.strow .use{display:flex;flex-wrap:wrap;gap:4px}
+.strow .use button{background:var(--user);border:0;border-radius:6px;padding:2px 7px;font-size:12px;cursor:pointer;color:var(--ink);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.strow .use em{color:var(--muted);font-style:normal}
+.strow .del{background:none;border:0;cursor:pointer;color:var(--muted);font-size:14px;padding:4px;border-radius:6px}
+.strow .del:hover{color:var(--danger);background:var(--bg)}
+.strow .del:disabled{opacity:.3;cursor:default}
+.stempty{padding:18px;color:var(--muted);font-size:14px}
+#helpLink{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;color:var(--side-ink);text-decoration:none;font-size:13px}
+#helpLink:hover{background:var(--side-hi);color:#fff}
+#appVersion{padding:6px 10px 0;font-size:11px;color:var(--side-ink);opacity:.6}
+@media (max-width:700px){.strow{grid-template-columns:24px minmax(0,1fr) 70px 30px}.strow .dt,.strow .use{display:none}}
+
+/* settings dialog */
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);padding:20px;width:min(520px,92vw)}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+dialog h2{margin:0 0 14px;font-size:18px;font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}
+.seg button{border:0;background:none;padding:6px 14px;cursor:pointer;font-size:13px;color:var(--muted)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-checked=true]{background:var(--accent);color:var(--accent-ink)}
+.swatches{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.swatch{width:26px;height:26px;border-radius:50%;border:2px solid var(--panel);background:var(--sw-l);cursor:pointer;box-shadow:0 0 0 1px var(--line);padding:0}
+.swatch[aria-checked=true]{box-shadow:0 0 0 2px var(--ink)}
+#accentName{font-size:13px;color:var(--muted);margin-left:4px}
+dialog label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+dialog textarea,dialog input[type=number]{width:100%;border:1px solid var(--line);border-radius:6px;padding:8px;background:var(--bg)}
+dialog textarea{min-height:110px;resize:vertical}
+.row{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.btn{border:1px solid var(--line);background:none;border-radius:6px;padding:7px 14px;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+
+@media (max-width:760px){
+  aside{position:fixed;z-index:10;inset:0 auto 0 0;box-shadow:4px 0 20px rgba(0,0,0,.3)}
+  #messages{padding:16px 14px 30px}.composer{padding:8px 10px 12px}
+}
+</style>
+</head>
+<body>
+<aside id="sidebar">
+  <button class="newchat" id="newChat">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    New chat
+  </button>
+  <div id="chatList"></div>
+  <div class="sidefoot">
+    <button id="openSettings"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg> Settings</button>
+    <button id="openDb"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg> Database</button>
+    <button id="exportAll"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg> Export all chats</button>
+    <button id="importBtn"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M5 21h14"/></svg> Import chats</button>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+    <button id="openStorage"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M5 13l2.5-8h9L19 13M6 17h.01M10 17h.01"/></svg> Storage</button>
+    <button id="clearAll"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/></svg> Delete all chats</button>
+    <a id="helpLink" href="/guide" target="_blank" rel="noopener"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01"/></svg> Help</a>
+    <div id="appVersion" title="Datasquint version">Datasquint {{ version }}</div>
+  </div>
+</aside>
+
+<main>
+  <header>
+    <button class="iconbtn" id="toggleSide" aria-label="Toggle sidebar">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+    </button>
+    <select id="model" aria-label="Model"></select>
+    <div class="dbwrap">
+      <button id="dbToggle" aria-haspopup="true" title="Choose which databases the model can query in this chat"><span class="dot"></span><span id="dbLabel">Database off</span><span class="caret">▾</span></button>
+      <div id="dbMenu" hidden></div>
+    </div>
+    <button class="tbbtn" id="tablesBtn" title="Browse the tables this chat can use">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg>
+      Tables
+    </button>
+    <div id="title"></div>
+    <div class="expwrap">
+      <button class="iconbtn" id="exportBtn" aria-haspopup="true" aria-label="Export this chat" title="Export this chat">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+      </button>
+      <div id="exportMenu" hidden>
+        <button id="expHtml">Download as HTML<small>Readable page to open, print or share</small></button>
+        <button id="expJson">Download as JSON<small>Backup you can import later</small></button>
+        <button id="expPy">Download as Python script<small>Re-run this chat's queries offline, without Datasquint</small></button>
+      </div>
+    </div>
+  </header>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <div id="scroll"><div id="messages"></div></div>
+  <div class="composer">
+    <div id="pending"></div>
+    <div class="box">
+      <button class="iconbtn" id="attachBtn" aria-label="Attach files" title="Attach files">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 01-7.8-7.8l8.6-8.6a3.7 3.7 0 015.2 5.2l-8.6 8.6a1.8 1.8 0 01-2.6-2.6l7.9-7.9"/></svg>
+      </button>
+      <input type="file" id="fileInput" multiple hidden>
+      <textarea id="input" rows="1" placeholder="Message" aria-label="Message"></textarea>
+      <button id="send" aria-label="Send" disabled>
+        <svg id="sendIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+    </div>
+    <div class="hint">Enter to send · Shift+Enter for a new line · Drop, paste or attach files</div>
+  </div>
+</main>
+
+<dialog id="dbDialog">
+  <h2>Database connections</h2>
+  <div class="dbgrid">
+    <div class="dbside">
+      <div id="connList"></div>
+      <button class="btn" id="connNew">+ New connection</button>
+    </div>
+    <div class="dbform">
+      <div id="envNote" class="fieldnote" hidden>This connection comes from <b>DATABASE_URL</b> in .env. Edit it there; you can still view its schema.</div>
+      <label for="cName">Name <span class="fieldnote">(the model uses it in <code>-- db: name</code>)</span></label><input type="text" id="cName" placeholder="e.g. production, workshop">
+      <div class="grid2">
+        <div><label for="dbHost">Host</label><input type="text" id="dbHost" placeholder="localhost"></div>
+        <div><label for="dbPort">Port</label><input type="text" id="dbPort" placeholder="5432"></div>
+      </div>
+      <label for="dbName">Database</label><input type="text" id="dbName">
+      <div class="grid2">
+        <div><label for="dbUser">User</label><input type="text" id="dbUser" autocomplete="off"></div>
+        <div><label for="dbSsl">SSL</label>
+          <select id="dbSsl" class="full"><option value="">default</option><option>disable</option><option>prefer</option><option>require</option><option>verify-full</option></select></div>
+      </div>
+      <label for="dbPass">Password</label><input type="password" id="dbPass" autocomplete="new-password">
+      <label for="cSchemas">Schemas the model can see</label><input type="text" id="cSchemas" placeholder="public  (comma-separated)">
+      <label for="cContext">Notes for the model</label>
+      <textarea id="cContext" placeholder="What the data means: status codes, units, time zone, how metrics are calculated…"></textarea>
+      <label class="check"><input type="checkbox" id="sshOn"> Connect through SSH</label>
+      <div id="sshFields" hidden>
+        <div class="fieldnote">The database host and port above are as seen from the SSH server, usually <b>localhost</b> and <b>5432</b>.</div>
+        <div class="grid2">
+          <div><label for="sshHost">SSH host</label><input type="text" id="sshHost" placeholder="bastion.example.com"></div>
+          <div><label for="sshPort">SSH port</label><input type="text" id="sshPort" placeholder="22"></div>
+        </div>
+        <div class="grid2" style="grid-template-columns:1fr 1fr">
+          <div><label for="sshUser">SSH user</label><input type="text" id="sshUser" autocomplete="off"></div>
+          <div><label for="sshAuth">Sign in with</label>
+            <select id="sshAuth" class="full">
+              <option value="password">Password</option>
+              <option value="key_path">Key file on server</option>
+              <option value="key_text">Paste private key</option>
+              <option value="agent">ssh-agent / default keys</option>
+            </select></div>
+        </div>
+        <div data-auth="password"><label for="sshPass">SSH password</label><input type="password" id="sshPass" autocomplete="new-password"></div>
+        <div data-auth="key_path"><label for="sshKeyPath">Private key path (on the machine running the app)</label>
+          <div class="pathrow"><input type="text" id="sshKeyPath" placeholder="~/.ssh/id_ed25519"><button class="btn" id="sshBrowse" type="button">Browse…</button></div></div>
+        <div data-auth="key_text"><label for="sshKeyText">Private key</label><textarea id="sshKeyText" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellcheck="false"></textarea></div>
+        <div data-auth="key_path key_text"><label for="sshPassphrase">Key passphrase (if any)</label><input type="password" id="sshPassphrase" autocomplete="new-password"></div>
+      </div>
+      <div id="dbState"></div>
+      <label>Schema the model sees <button class="btn" id="dbRefresh" style="padding:1px 8px;font-size:12px;margin-left:6px">Refresh</button></label>
+      <pre id="dbSchema">—</pre>
+    </div>
+  </div>
+  <div class="row">
+    <button class="btn left danger" id="connDelete">Delete</button>
+    <button class="btn" id="dbClose">Close</button>
+    <button class="btn" id="connForce" hidden>Save anyway</button>
+    <button class="btn primary" id="connSave">Test &amp; save</button>
+  </div>
+</dialog>
+<dialog id="keyPicker">
+  <h2>Choose a private key</h2>
+  <div class="fieldnote" id="kpWhere"></div>
+  <div class="kpbar"><button class="btn" id="kpUp" type="button" title="Up one folder">↑</button><code id="kpPath"></code></div>
+  <div id="kpList"></div>
+  <label class="check" style="margin-top:10px"><input type="checkbox" id="kpAll"> Show all files</label>
+  <div class="row"><button class="btn" id="kpCancel" type="button">Cancel</button></div>
+</dialog>
+<div id="drop">Drop files to attach</div>
+<dialog id="askDlg">
+  <h2 id="askTitle"></h2>
+  <div id="askBody"></div>
+  <label class="check" id="askCheckWrap" hidden><input type="checkbox" id="askCheck"> <span id="askCheckText"></span></label>
+  <div class="fieldnote" id="askNote" hidden></div>
+  <div class="row">
+    <button class="btn" id="askCancel" type="button">Cancel</button>
+    <button class="btn primary danger" id="askOk" type="button">Delete</button>
+  </div>
+</dialog>
+<dialog id="tablesDlg" aria-labelledby="tbH">
+  <div class="tbhead">
+    <h2 id="tbH">Tables</h2>
+    <button class="btn" id="tbRefresh" type="button" title="Reload the list (e.g. after the database changed)">Refresh</button>
+    <button class="btn" id="tbClose" type="button">Close</button>
+  </div>
+  <div class="tbbody">
+    <div class="tblist"><input id="tbFind" type="search" placeholder="Find a table…" aria-label="Find a table"><div id="tbList"></div></div>
+    <div class="tbmain" id="tbMain"></div>
+  </div>
+</dialog>
+<dialog id="storageDlg">
+  <h2>Storage</h2>
+  <div class="stbar">
+    <span id="stSummary">Loading…</span>
+    <select id="stFilter" aria-label="Show">
+      <option value="all">All files</option>
+      <option value="unused">Not used by chats in this browser</option>
+    </select>
+  </div>
+  <div id="stList"></div>
+  <div class="fieldnote">"Used in" covers chats in this browser only. A file used from another browser or PC shows as unused here.</div>
+  <div class="row">
+    <button class="btn left danger" id="stDeleteUnused" type="button">Delete all unused</button>
+    <button class="btn" id="stClose" type="button">Close</button>
+    <button class="btn primary danger" id="stDeleteSel" type="button" disabled>Delete selected</button>
+  </div>
+</dialog>
+<dialog id="settings">
+  <h2>Settings</h2>
+  <label>Appearance</label>
+  <div class="seg" id="modeSeg" role="radiogroup" aria-label="Appearance">
+    <button type="button" data-mode="system">System</button><button type="button" data-mode="light">Light</button><button type="button" data-mode="dark">Dark</button>
+  </div>
+  <label>Colour</label>
+  <div class="swatches" id="accentPick" role="radiogroup" aria-label="Colour"><button type="button" class="swatch" data-accent="teal" title="Teal" aria-label="Teal" style="--sw-l:#2f6f8f;--sw-d:#5ba3c6"></button><button type="button" class="swatch" data-accent="blue" title="Blue" aria-label="Blue" style="--sw-l:#2f5fb3;--sw-d:#7aa2ea"></button><button type="button" class="swatch" data-accent="violet" title="Violet" aria-label="Violet" style="--sw-l:#6a4fb3;--sw-d:#a890ec"></button><button type="button" class="swatch" data-accent="green" title="Green" aria-label="Green" style="--sw-l:#2f7d55;--sw-d:#62c08d"></button><button type="button" class="swatch" data-accent="amber" title="Amber" aria-label="Amber" style="--sw-l:#9c5a14;--sw-d:#e2a356"></button><button type="button" class="swatch" data-accent="rose" title="Rose" aria-label="Rose" style="--sw-l:#b03a5b;--sw-d:#ea7f9c"></button><button type="button" class="swatch" data-accent="graphite" title="Graphite" aria-label="Graphite" style="--sw-l:#4a5563;--sw-d:#a9b3bf"></button><span id="accentName"></span></div>
+  <label for="sysPrompt">System prompt</label>
+  <textarea id="sysPrompt"></textarea>
+  <label for="temp">Temperature (0–2)</label>
+  <input type="number" id="temp" min="0" max="2" step="0.1">
+  <label class="check"><input type="checkbox" id="autoRun"> Run the model's SQL queries automatically</label>
+  <div style="font-size:12px;color:var(--muted);margin-top:4px">Queries are always read-only. Auto-run stops after 5 queries in a row so you can check in.</div>
+  <div class="row">
+    <button class="btn" id="cancelSettings">Cancel</button>
+    <button class="btn primary" id="saveSettings">Save</button>
+  </div>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+/* ---------- error logging: page errors and error messages shown to the user go to the server log ---------- */
+let logBudget = 20;   // per page load, so a broken page can't flood the log
+function serverLog(kind, message, extra = {}){
+  if (logBudget-- <= 0) return;
+  try { fetch("/api/log", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
+    body: JSON.stringify({ kind, message: String(message).slice(0, 1000), ...extra }) }).catch(() => {}); } catch {}
+}
+window.addEventListener("error", e => serverLog("page error", e.message,
+  { source: (e.filename || "").split("/").pop(), line: e.lineno ? `${e.lineno}:${e.colno}` : "", stack: e.error?.stack || "" }));
+window.addEventListener("unhandledrejection", e => serverLog("page error", e.reason?.message || String(e.reason), { stack: e.reason?.stack || "" }));
+const APP_VERSION = {{ version|tojson }};
+const STORE = "datasquint.v1";
+const OLD_STORES = ["pgpeek.v1", "dbhelper.v1", "flaskchat.v1"];   // earlier names (pgPeek, DB Helper, flask-chat); migrated once on first load
+// Move chats from an earlier name, once. Copy when there's nothing here yet (or only an empty list),
+// and remove an old key only once its chats are safely here, so nothing is ever thrown away.
+try {
+  const count = k => { try { return JSON.parse(localStorage.getItem(k))?.chats?.length || 0; } catch { return 0; } };
+  const old = OLD_STORES.find(k => count(k) > 0);
+  if (old && count(STORE) === 0) localStorage.setItem(STORE, localStorage.getItem(old));
+  OLD_STORES.forEach(k => { if (count(k) === 0 || localStorage.getItem(k) === localStorage.getItem(STORE)) localStorage.removeItem(k); });
+} catch {}
+const ICON_SEND = '<path d="M12 19V5M5 12l7-7 7 7"/>';
+const ICON_STOP = '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/>';
+
+let state = load() || { chats: [], current: null, settings: null, model: null };
+let controller = null;
+let pending = [];   // {key, file, status:'uploading'|'ready'|'error', meta, error, preview}
+let maxMB = 20, maxTableMB = 20, tableExts = [];
+let conns = [], connStatus = {}, dbInfo = { available: true, ssh_available: true };
+let editing = null;   // id of the connection open in the manager, or null for a new one
+const SQL_LANGS = ["sql","pgsql","postgres","postgresql","plpgsql"];
+const AUTO_RUN_LIMIT = 5;
+let allowedExts = null, specialNames = [];
+
+function load(){ try { return JSON.parse(localStorage.getItem(STORE)); } catch { return null; } }
+function save(){
+  try { localStorage.setItem(STORE, JSON.stringify(state)); return true; }
+  catch { notify("Couldn't save chats: the browser's storage is full. Export and delete some old chats.", true); return false; }
+}
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const cur = () => state.chats.find(c => c.id === state.current);
+
+/* ---------- markdown ---------- */
+function md(text){
+  if (!window.marked) return fallbackMd(text);
+  const html = marked.parse(text, { breaks: true, gfm: true });
+  return window.DOMPurify ? DOMPurify.sanitize(html) : html;
+}
+function fallbackMd(text){   // used when the markdown library can't load (offline): keeps code blocks working
+  const e = t => t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  return text.split(/(```[\w+-]*[ \t]*\n[\s\S]*?```)/g).map(seg => {
+    const m = seg.match(/^```([\w+-]*)[ \t]*\n([\s\S]*?)```$/);
+    return m ? `<pre><code class="language-${e(m[1] || "text")}">${e(m[2].replace(/\n$/, ""))}</code></pre>` : e(seg).replace(/\n/g,"<br>");
+  }).join("");
+}
+/* code blocks: Download picks a file name and extension from the language */
+const LANG_EXT = { python: "py", py: "py", python3: "py", javascript: "js", js: "js", node: "js", typescript: "ts", ts: "ts",
+  jsx: "jsx", tsx: "tsx", sql: "sql", pgsql: "sql", postgres: "sql", postgresql: "sql", plpgsql: "sql", duckdb: "sql",
+  csv: "csv", tsv: "tsv", json: "json", jsonl: "jsonl", html: "html", xml: "xml", svg: "svg", css: "css", scss: "scss",
+  bash: "sh", sh: "sh", shell: "sh", zsh: "sh", console: "sh", powershell: "ps1", ps1: "ps1", pwsh: "ps1", bat: "bat",
+  batch: "bat", cmd: "bat", yaml: "yaml", yml: "yaml", toml: "toml", ini: "ini", markdown: "md", md: "md", c: "c", h: "h",
+  cpp: "cpp", "c++": "cpp", cc: "cpp", csharp: "cs", cs: "cs", "c#": "cs", java: "java", go: "go", golang: "go",
+  rust: "rs", rs: "rs", ruby: "rb", rb: "rb", php: "php", kotlin: "kt", swift: "swift", r: "R", matlab: "m",
+  vba: "bas", vb: "vb", lua: "lua", perl: "pl", dart: "dart", scala: "scala", arduino: "ino", ino: "ino",
+  verilog: "v", vhdl: "vhd", diff: "diff", patch: "patch", text: "txt", txt: "txt", plaintext: "txt", "": "txt" };
+const FILE_NAME = /^[\w][\w.-]*\.[A-Za-z][A-Za-z0-9]{0,7}$/;
+function codeLang(code){ const m = (code.className || "").match(/language-([\w+#.-]+)/); return m ? m[1].toLowerCase() : ""; }
+function codeExt(lang){ return lang in LANG_EXT ? LANG_EXT[lang] : /^[a-z0-9]{1,6}$/.test(lang) ? lang : "txt"; }
+function codeFileName(code, pre){   // a name the reply gives the file, or null
+  const lang = codeLang(code), ext = codeExt(lang);
+  // 1) the first line names the file: "# file: report.py", "// save as app.js", "-- totals.sql"
+  const first = (code.textContent.split("\n")[0] || "").trim();
+  const m = first.match(/^(?:#|\/\/|--|;|%|\/\*|<!--|REM\s)\s*(?:(?:file(?:\s*name)?|filename|save(?: this)? as|name)\s*[:=]?\s*)?([\w][\w.-]*\.[A-Za-z][A-Za-z0-9]{0,7})\s*(?:\*\/|-->)?$/i);
+  if (m) return m[1];
+  // 2) the text just above the block names a file of the same type in `code`, e.g. "Save this as `report.py`:"
+  const prev = pre.previousElementSibling;
+  if (prev && !prev.matches("pre")) {
+    const named = [...prev.querySelectorAll("code")].map(c => c.textContent.trim())
+      .filter(t => FILE_NAME.test(t) && (ext === "txt" || t.toLowerCase().endsWith("." + ext.toLowerCase())));
+    if (named.length) return named[named.length - 1];
+  }
+  if (lang === "dockerfile") return "Dockerfile";
+  if (lang === "makefile" || lang === "make") return "Makefile";
+  return null;
+}
+function downloadCode(code, name){
+  let text = code.textContent; if (!text.endsWith("\n")) text += "\n";
+  const type = name.endsWith(".csv") ? "text/csv" : name.endsWith(".json") ? "application/json" : name.endsWith(".html") ? "text/html" : "text/plain";
+  download(name, (type === "text/csv" ? "\ufeff" : "") + text, type + ";charset=utf-8");
+}
+function codeBar(pre){
+  let bar = pre.querySelector(".codebar");
+  if (!bar) { bar = document.createElement("div"); bar.className = "codebar"; pre.appendChild(bar); }
+  return bar;
+}
+function decorate(el){
+  el.querySelectorAll("pre code").forEach(c => { if (window.hljs) hljs.highlightElement(c); });
+  const seen = {};
+  el.querySelectorAll("pre").forEach(pre => {
+    if (pre.querySelector(".copycode")) return;
+    const code = pre.querySelector("code") || pre;
+    let name = codeFileName(code, pre);
+    if (!name) {   // unnamed: chat title + extension, numbered per type within the reply
+      const ext = codeExt(codeLang(code)); seen[ext] = (seen[ext] || 0) + 1;
+      name = `${slug(cur()?.title || "datasquint")}${seen[ext] > 1 ? "-" + seen[ext] : ""}.${ext}`;
+    }
+    const bar = codeBar(pre);
+    const d = document.createElement("button"); d.className = "dlcode"; d.type = "button"; d.textContent = "Download";
+    d.title = "Download as " + name; d.setAttribute("aria-label", "Download as " + name);
+    d.onclick = () => downloadCode(code, name);
+    const b = document.createElement("button"); b.className = "copycode"; b.type = "button"; b.textContent = "Copy";
+    b.onclick = () => { navigator.clipboard.writeText(code.innerText || pre.innerText); b.textContent = "Copied"; setTimeout(()=>b.textContent="Copy",1200); };
+    bar.append(d, b);
+  });
+}
+
+/* ---------- attachments ---------- */
+const fmtSize = n => n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(0) + " KB" : n < 1073741824 ? (n/1048576).toFixed(1) + " MB" : (n/1073741824).toFixed(2) + " GB";
+const extOf = n => (n.split(".").pop() || "file").slice(0,4).toUpperCase();
+function esc(t){ const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
+
+function addFiles(files){
+  for (const file of files) {
+    const item = { key: uid(), file, status: "uploading" };
+    const dot = file.name.lastIndexOf(".");
+    const ext = dot > 0 ? file.name.slice(dot).toLowerCase() : "";
+    if (allowedExts && !allowedExts.includes(ext) && !specialNames.includes(file.name.toLowerCase())) {
+      item.status = "error"; item.error = `${ext || "No extension"} isn't an allowed type`;
+    } else {
+      const limit = tableExts.includes(ext) ? maxTableMB : maxMB;
+      if (file.size > limit * 1048576) { item.status = "error"; item.error = `Over the ${limit} MB limit for ${tableExts.includes(ext) ? "CSV/Excel" : "this type"}`; }
+    }
+    item.table = tableExts.includes(ext);
+    if (file.type.startsWith("image/")) item.preview = URL.createObjectURL(file);
+    pending.push(item);
+    if (item.status === "uploading") uploadOne(item);
+  }
+  renderPending();
+}
+function uploadOne(item){
+  // XMLHttpRequest rather than fetch, because only XHR reports upload progress
+  const fd = new FormData(); fd.append("file", item.file);
+  const xhr = new XMLHttpRequest(); item.xhr = xhr;
+  item.progress = 0;
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return;
+    const pct = Math.floor(e.loaded / e.total * 100);
+    if (pct !== item.progress) { item.progress = pct; updateChipStatus(item); }
+  };
+  xhr.upload.onload = () => { item.progress = 100; updateChipStatus(item); };
+  const fail = msg => { item.status = "error"; item.error = msg; item.xhr = null; renderPending(); };
+  xhr.onload = () => {
+    let j = null; try { j = JSON.parse(xhr.responseText); } catch {}
+    if (xhr.status >= 200 && xhr.status < 300 && j && !j.error) { item.meta = j; item.status = "ready"; item.xhr = null; renderPending();
+      if (j.table_error) notify(`${j.name} was read as text, not loaded as a table: ${j.table_error}`, true); }
+    else fail(j?.error || `Upload failed (${xhr.status})`);
+  };
+  xhr.onerror = () => fail("Upload failed: couldn't reach the server");
+  xhr.onabort = () => { item.xhr = null; };
+  xhr.open("POST", "/api/upload"); xhr.send(fd);
+}
+function uploadStatus(p){
+  if (p.progress < 100) return `Uploading ${p.progress || 0}%`;
+  return p.table ? "Loading table…" : "Processing…";
+}
+function updateChipStatus(p){
+  const el = document.querySelector(`#pending .chip[data-key="${p.key}"] small`);
+  if (el) el.textContent = uploadStatus(p); else renderPending();
+}
+function renderPending(){
+  const box = $("#pending"); box.innerHTML = "";
+  pending.forEach(p => {
+    const c = document.createElement("div");
+    c.className = "chip" + (p.status === "error" ? " err" : "") + (p.status === "ready" && tableIssue(p.meta) ? " warn" : ""); c.dataset.key = p.key;
+    if (p.status === "ready" && tableIssue(p.meta)) c.title = tableIssue(p.meta);
+    const status = p.status === "uploading" ? uploadStatus(p) : p.status === "error" ? p.error
+      : fmtSize(p.meta.size) + tableNote(p.meta) + (p.meta.stats ? ` · ${p.meta.stats.files} files` + (p.meta.stats.skipped ? `, ${p.meta.stats.skipped} skipped` : "") : "")
+        + (p.meta.stats?.trimmed ? ` · ${p.meta.stats.trimmed} trimmed` : p.meta.truncated ? " · truncated" : "");
+    c.innerHTML = (p.preview ? `<img src="${p.preview}" alt="">` : `<div class="ficon">${esc(extOf(p.file.name))}</div>`)
+      + `<div class="meta"><b>${esc(p.file.name)}</b><small>${esc(status)}</small></div><button title="Remove" aria-label="Remove">✕</button>`;
+    c.querySelector("button").onclick = () => { p.xhr?.abort(); pending = pending.filter(x => x !== p); if (p.preview) URL.revokeObjectURL(p.preview); renderPending(); };
+    box.appendChild(c);
+  });
+  updateSend();
+}
+function attachmentsEl(atts, onRemove){
+  const w = document.createElement("div"); w.className = "msgatts";
+  atts.forEach(a => {
+    const link = document.createElement("a"); link.href = "/files/" + a.id; link.target = "_blank"; link.title = a.name;
+    if (a.kind === "image") {
+      const img = new Image(); img.src = "/files/" + a.id; img.alt = a.name;
+      img.onerror = () => img.replaceWith(document.createTextNode(a.name + " (unavailable)"));
+      link.appendChild(img);
+    }
+    else link.innerHTML = `<div class="chip${tableIssue(a) ? " warn" : ""}" title="${esc(tableIssue(a))}"><div class="ficon">${esc(extOf(a.name))}</div><div class="meta"><b>${esc(a.name)}</b><small>${fmtSize(a.size)}${esc(tableNote(a))}${a.stats ? " · " + a.stats.files + " files" : ""}</small></div></div>`;
+    if (!onRemove) { w.appendChild(link); return; }
+    const box = document.createElement("span"); box.className = "att"; box.appendChild(link);
+    const rm = document.createElement("button"); rm.className = "rm"; rm.type = "button"; rm.textContent = "✕";
+    rm.title = "Remove from this chat"; rm.setAttribute("aria-label", `Remove ${a.name} from this chat`);
+    rm.onclick = e => { e.preventDefault(); e.stopPropagation(); onRemove(a); };
+    box.appendChild(rm); w.appendChild(box);
+  });
+  return w;
+}
+
+/* ---------- rendering ---------- */
+function renderList(){
+  const list = $("#chatList"); list.innerHTML = "";
+  state.chats.forEach(c => {
+    const d = document.createElement("div");
+    d.className = "item" + (c.id === state.current ? " active" : "");
+    d.innerHTML = `<span></span><button title="Rename">✎</button><button title="Delete">✕</button>`;
+    d.querySelector("span").textContent = c.title || "New chat";
+    d.onclick = () => { if (controller) return; state.current = c.id; save(); render(); };
+    const [ren, del] = d.querySelectorAll("button");
+    ren.onclick = e => { e.stopPropagation(); const t = prompt("Rename chat", c.title); if (t) { c.title = t.trim(); save(); render(); } };
+    del.onclick = e => { e.stopPropagation(); deleteChats([c]); };
+    list.appendChild(d);
+  });
+}
+
+function sqlCard(r){
+  const card = document.createElement("div"); card.className = "sqlcard";
+  const meta = r.error ? "Failed" : `${r.row_count}${r.truncated ? "+" : ""} row${r.row_count === 1 && !r.truncated ? "" : "s"} · ${r.ms} ms`;
+  card.innerHTML = `<div class="sqlhead"><b>Query result</b>${r.db_name ? `<span style="color:var(--muted)">· ${esc(r.db_name)}</span>` : ""}<small>${esc(meta)}</small></div><details><summary>SQL</summary><pre><code></code></pre></details>`;
+  card.querySelector("code").textContent = r.sql;
+  if (!r.error && r.columns?.length) {
+    const dl = document.createElement("button"); dl.className = "dlcsv"; dl.type = "button"; dl.textContent = "Download CSV";
+    dl.title = "Run the query again and download the full result (not just the rows shown here)";
+    dl.onclick = () => downloadResult(r, dl);
+    card.querySelector(".sqlhead").appendChild(dl);
+    const py = document.createElement("button"); py.className = "dlcsv"; py.type = "button"; py.textContent = "Python";
+    py.title = "Download a Python script that re-runs this query offline, without Datasquint";
+    py.onclick = () => downloadScript([{ sql: r.sql }], `${cur()?.title || "query"} query`, py);
+    card.querySelector(".sqlhead").appendChild(py);
+  }
+  if (r.error) {
+    const e = document.createElement("div"); e.className = "sqlerr"; e.textContent = r.error; card.appendChild(e);
+  } else if (r.columns?.length) {
+    const tw = document.createElement("div"); tw.className = "tablewrap";
+    const t = document.createElement("table");
+    const hr = t.createTHead().insertRow();
+    r.columns.forEach(c => { const th = document.createElement("th"); th.textContent = c; hr.appendChild(th); });
+    const tb = t.createTBody();
+    (r.rows || []).forEach(row => { const tr = tb.insertRow(); row.forEach(v => { const td = tr.insertCell();
+      if (v === null) { td.textContent = "NULL"; td.className = "null"; } else { td.textContent = String(v); td.title = String(v); } }); });
+    tw.appendChild(t); card.appendChild(tw);
+    if (r.rows_stored < r.row_count) { const n = document.createElement("div"); n.className = "sqlnote";
+      n.textContent = `Showing ${r.rows_stored} of ${r.row_count} rows here; the model received more.`; card.appendChild(n); }
+    if (!r.row_count) { const n = document.createElement("div"); n.className = "sqlnote"; n.textContent = "No rows."; card.appendChild(n); }
+  } else { const n = document.createElement("div"); n.className = "sqlnote"; n.textContent = "No columns returned."; card.appendChild(n); }
+  return card;
+}
+async function downloadResult(r, btn){
+  const c = cur(); if (!c) return;
+  btn.disabled = true; btn.textContent = "Preparing…";
+  try {
+    const res = await fetch("/api/db/export", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sql: r.sql, dbs: chatDbs(c), files: chatFileIds(c) }) });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || `Server returned ${res.status}`); }
+    const blob = await res.blob(), rows = +res.headers.get("X-Row-Count") || 0;
+    const url = URL.createObjectURL(blob), a = document.createElement("a");
+    a.href = url; a.download = `${slug(c.title)}${r.db_name ? "-" + slug(r.db_name) : ""}-result.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+    notify(res.headers.get("X-Truncated") === "1"
+      ? `Downloaded the first ${rows.toLocaleString()} rows (the download limit, DB_EXPORT_MAX_ROWS). Add a filter or aggregate for the rest.`
+      : `Downloaded ${rows.toLocaleString()} row${rows === 1 ? "" : "s"}.`, res.headers.get("X-Truncated") === "1");
+  } catch (e) { notify("Couldn't download the result: " + e.message, true); }
+  finally { btn.disabled = false; btn.textContent = "Download CSV"; }
+}
+function toCSV(r){
+  const q = v => v === null ? "" : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g,'""')}"` : String(v);
+  return [r.columns, ...(r.rows || [])].map(row => row.map(q).join(",")).join("\n");
+}
+function sqlBlocks(el){
+  return [...el.querySelectorAll("pre code")].filter(c =>
+    SQL_LANGS.some(l => c.classList.contains("language-" + l)));
+}
+function addRunButtons(bubble){
+  if (!canQuery()) return;
+  sqlBlocks(bubble).forEach(code => {
+    const pre = code.closest("pre"); if (pre.querySelector(".runsql")) return;
+    const b = document.createElement("button"); b.className = "runsql"; b.type = "button"; b.textContent = "Run";
+    b.onclick = () => { if (controller) return; b.disabled = true; b.textContent = "Running…"; runAndSend([code.innerText.trim()]); };
+    codeBar(pre).prepend(b);
+  });
+}
+
+function msgEl(m, i){
+  const wrap = document.createElement("div");
+  wrap.className = "msg " + m.role;
+  if (m.kind === "sql") {
+    wrap.className = "msg sql";
+    m.results.forEach(r => wrap.appendChild(sqlCard(r)));
+    const tools = document.createElement("div"); tools.className = "tools";
+    const cp = document.createElement("button"); cp.textContent = "Copy CSV";
+    cp.onclick = () => { navigator.clipboard.writeText(m.results.filter(r => !r.error).map(toCSV).join("\n\n")); cp.textContent = "Copied"; setTimeout(()=>cp.textContent="Copy CSV",1200); };
+    tools.appendChild(cp);
+    const rr = document.createElement("button"); rr.textContent = "Run again";
+    rr.onclick = () => { if (controller) return; cur().messages = cur().messages.slice(0, i); runAndSend(m.results.map(r => r.sql)); };
+    tools.appendChild(rr);
+    wrap.appendChild(tools);
+    return wrap;
+  }
+  if (m.attachments?.length) wrap.appendChild(attachmentsEl(m.attachments, m.role === "user" ? a => removeAttachment(cur(), a) : null));
+  if (m.removed?.length) {
+    const rmv = document.createElement("div"); rmv.className = "removed";
+    rmv.innerHTML = "Removed from chat: " + m.removed.map(n => `<s>${esc(n)}</s>`).join(", ");
+    wrap.appendChild(rmv);
+  }
+  const b = document.createElement("div");
+  b.className = "bubble" + (m.error ? " error" : "");
+  if (m.role === "user") b.textContent = m.content; else { b.innerHTML = md(m.content); decorate(b); addRunButtons(b); }
+  if (m.role !== "user" || m.content) wrap.appendChild(b);
+  const tools = document.createElement("div"); tools.className = "tools";
+  const copy = document.createElement("button"); copy.textContent = "Copy";
+  copy.onclick = () => { navigator.clipboard.writeText(m.content); copy.textContent = "Copied"; setTimeout(()=>copy.textContent="Copy",1200); };
+  tools.appendChild(copy);
+  if (m.parts > 1) { const pn = document.createElement("span"); pn.className = "partsnote";
+    pn.textContent = `Read in ${m.parts} parts`; pn.title = "Too large for one request, so the files were read in parts and combined";
+    tools.appendChild(pn); }
+  if (m.role === "user") {
+    const ed = document.createElement("button"); ed.textContent = "Edit";
+    ed.onclick = () => editMessage(i, wrap); tools.appendChild(ed);
+  } else if (i === cur().messages.length - 1) {
+    const rg = document.createElement("button"); rg.textContent = "Regenerate";
+    rg.onclick = regenerate; tools.appendChild(rg);
+  }
+  wrap.appendChild(tools);
+  return wrap;
+}
+
+function render(){
+  renderList();
+  updateDbToggle();
+  const box = $("#messages"); box.innerHTML = "";
+  const c = cur();
+  $("#title").textContent = c?.title || "";
+  $("#exportBtn").disabled = !c?.messages.length;
+  if (!c || !c.messages.length) {
+    box.style.height = "100%";
+    box.innerHTML = `<div class="empty"><div><h1>Datasquint</h1><div>Ask about your data, or attach files to get started.</div></div></div>`;
+    return;
+  }
+  box.style.height = "";
+  c.messages.forEach((m, i) => box.appendChild(msgEl(m, i)));
+  scrollDown(true);
+}
+function scrollDown(force){
+  const s = $("#scroll");
+  if (force || s.scrollHeight - s.scrollTop - s.clientHeight < 120) s.scrollTop = s.scrollHeight;
+}
+
+/* ---------- chat flow ---------- */
+function newChat(){
+  if (controller) return;
+  const c = { id: uid(), title: "", messages: [], dbs: (state.dbDefaults || []).filter(id => conns.some(x => x.id === id)) };
+  state.chats.unshift(c); state.current = c.id; save(); render(); $("#input").focus();
+}
+
+async function send(text, atts){
+  let c = cur();
+  if (!c) { newChat(); c = cur(); }
+  if (text !== null) {
+    const m = { role: "user", content: text };
+    if (atts?.length) m.attachments = atts;
+    c.messages.push(m);
+    if (!c.title) c.title = (text || atts.map(a => a.name).join(", ")).slice(0, 48).replace(/\s+/g, " ");
+    // move chat to top
+    state.chats = [c, ...state.chats.filter(x => x.id !== c.id)];
+  }
+  const reply = { role: "assistant", content: "" };
+  c.messages.push(reply); save(); render();
+
+  const bubbles = document.querySelectorAll("#messages .msg.assistant .bubble");
+  const bubble = bubbles[bubbles.length - 1];
+  bubble.classList.add("cursor");
+  const statusEl = document.createElement("div"); statusEl.className = "status";
+  bubble.parentNode.insertBefore(statusEl, bubble);
+  setBusy(true);
+
+  controller = new AbortController();
+  let aborted = false;
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+      body: JSON.stringify({
+        model: $("#model").value,
+        temperature: state.settings.temperature,
+        dbs: chatDbs(c),
+        system: state.settings.system,
+        messages: c.messages.slice(0, -1).filter(m => !m.error).map(({role, content, attachments, removed}) => ({role, attachments,
+          content: removed?.length ? `${content}\n\n[The user removed ${removed.length > 1 ? "these attachments" : "this attachment"} from the chat; it is no longer available: ${removed.join(", ")}]`.trim() : content }))
+      })
+    });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "", pending = false;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const ev = JSON.parse(line);
+        if (ev.delta) { reply.content += ev.delta; statusEl.textContent = ""; }
+        if (ev.status) statusEl.textContent = ev.status;
+        if (ev.parts) reply.parts = ev.parts;
+        if (ev.error) { reply.content += (reply.content ? "\n\n" : "") + "**Request failed.** " + ev.error; reply.error = true; }
+      }
+      if (!pending) { pending = true; requestAnimationFrame(() => { bubble.innerHTML = md(reply.content); scrollDown(); pending = false; }); }
+    }
+  } catch (e) {
+    if (e.name === "AbortError") aborted = true;
+    if (e.name !== "AbortError") { reply.content += (reply.content ? "\n\n" : "") + "**Request failed.** " + e.message; reply.error = true; }
+  } finally {
+    controller = null;
+    if (!reply.content) { reply.content = "_Stopped before any response._"; }
+    save(); setBusy(false); render();
+    if (!aborted && !reply.error) maybeAutoRun(c, reply);
+  }
+}
+
+/* ---------- SQL runs ---------- */
+function extractSQL(content){
+  const tmp = document.createElement("div"); tmp.innerHTML = md(content);
+  return sqlBlocks(tmp).map(c => c.textContent.trim()).filter(Boolean);
+}
+function maybeAutoRun(c, reply){
+  if (!state.settings.autoRun || !canQuery(c) || c.id !== state.current) return;
+  const sqls = extractSQL(reply.content); if (!sqls.length) return;
+  let streak = 0;   // query rounds since the user last typed something
+  for (let k = c.messages.length - 1; k >= 0; k--) {
+    const m = c.messages[k];
+    if (m.kind === "sql") streak++; else if (m.role === "user") break;
+  }
+  if (streak >= AUTO_RUN_LIMIT) return;
+  runAndSend(sqls);
+}
+async function runAndSend(sqls){
+  const c = cur(); if (!c || controller) return;
+  setBusy(true);
+  const results = [];
+  for (const sql of sqls) {
+    try {
+      const r = await fetch("/api/db/query", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sql, dbs: chatDbs(c), files: chatFileIds(c) }) }).then(r => r.json());
+      results.push(r);
+    } catch (e) { results.push({ sql, error: "Couldn't reach the server: " + e.message, text: "```sql\n" + sql + "\n```\nError: " + e.message }); }
+  }
+  setBusy(false);
+  const content = "Query results from the app (not typed by the user):\n\n" +
+    results.map((r, k) => (results.length > 1 ? `Query ${k + 1}:\n` : "") + r.text).join("\n\n") +
+    "\n\nContinue: answer from these results, or fix and rerun the query if it failed.";
+  const stored = results.map(r => ({ sql: r.sql, error: r.error, db_name: r.db_name, columns: r.columns, row_count: r.row_count,
+    truncated: r.truncated, ms: r.ms, rows: (r.rows || []).slice(0, 100), rows_stored: Math.min(100, r.rows?.length || 0) }));
+  c.messages.push({ role: "user", kind: "sql", content, results: stored });
+  send(null);
+}
+
+/* ---------- database ---------- */
+const api = (url, opts = {}) => fetch(url, { headers: { "Content-Type": "application/json" }, ...opts })
+  .then(async r => { const j = await r.json().catch(() => ({ error: `Server returned ${r.status}` })); if (!r.ok && !j.error) j.error = `Server returned ${r.status}`; return j; })
+  .catch(e => ({ error: "Couldn't reach the server: " + e.message }));
+function chatDbs(c = cur()){ return (c?.dbs || []).filter(id => conns.some(x => x.id === id)); }
+/* All attachment ids in message order: the server picks the CSV/Excel ones and names their tables
+   from this order, so the names match the ones the model was given. */
+function chatFileIds(c = cur()){
+  const ids = [];
+  (c?.messages || []).forEach(m => { if (m.role === "user" && m.kind !== "sql") (m.attachments || []).forEach(a => { if (!ids.includes(a.id)) ids.push(a.id); }); });
+  return ids;
+}
+function chatHasTables(c = cur()){ return (c?.messages || []).some(m => (m.attachments || []).some(a => a.tables?.length)); }
+function canQuery(c = cur()){ return chatDbs(c).length > 0 || chatHasTables(c); }
+function tableIssue(x){
+  // why a CSV/Excel file isn't a table, or what went partly wrong while loading it (shown on hover)
+  if (x?.table_error) return `Read as text, not loaded as a table: ${x.table_error}`;
+  if (x?.warnings?.length) return `Loaded, with notes:\n• ${x.warnings.join("\n• ")}`;
+  return "";
+}
+function tableNote(x){
+  if (x?.table_error) return " · ⚠ read as text, not a table";
+  if (!x?.tables?.length) return "";
+  if (x.warnings?.length) {
+    const rows = x.tables.reduce((n, t) => n + (+t.rows || 0), 0);
+    return ` · ${x.tables.length > 1 ? x.tables.length + " tables" : "table"}, ${rows.toLocaleString()} rows · ⚠ ${x.warnings.length} note${x.warnings.length > 1 ? "s" : ""}`;
+  }
+  const rows = x.tables.reduce((n, t) => n + (+t.rows || 0), 0);
+  return x.tables.length > 1 ? ` · ${x.tables.length} tables, ${rows.toLocaleString()} rows` : ` · table, ${rows.toLocaleString()} rows`;
+}
+function connName(id){ return conns.find(x => x.id === id)?.name || id; }
+
+async function loadConnections(){
+  const r = await api("/api/db/connections");
+  if (r.error) { conns = []; return; }
+  conns = r.connections; dbInfo = { available: r.available, ssh_available: r.ssh_available };
+  // migrate chats from the single-database version
+  state.chats.forEach(c => { if (c.db === true && !c.dbs) c.dbs = conns.length ? [conns[0].id] : []; delete c.db; });
+  if (state.dbOn && !state.dbDefaults) state.dbDefaults = conns.length ? [conns[0].id] : [];
+  delete state.dbOn; save();
+}
+async function checkStatus(ids){
+  await Promise.all(ids.map(async id => {
+    const r = await api(`/api/db/connections/${id}/status`);
+    connStatus[id] = { ok: !!r.ok, error: r.error, info: r };
+  }));
+  updateDbToggle(); renderConnList();
+  if (!$("#dbMenu").hidden) renderDbMenu();
+}
+
+function updateDbToggle(){
+  const t = $("#dbToggle"), ids = chatDbs(), files = chatHasTables();
+  const bad = ids.some(id => connStatus[id] && !connStatus[id].ok);
+  t.classList.toggle("on", (ids.length > 0 || files) && !bad);
+  t.classList.toggle("bad", bad);
+  $("#dbLabel").textContent = !ids.length ? (files ? "Files" : "Database off")
+    : (ids.length === 1 ? connName(ids[0]) : `${ids.length} databases`) + (files ? " + files" : "");
+  t.title = !ids.length ? (files ? "This chat's CSV and Excel files can be queried. Click to add databases."
+                                 : "Choose which databases the model can query in this chat")
+    : ids.map(id => connName(id) + (connStatus[id] && !connStatus[id].ok ? " (unavailable: " + connStatus[id].error + ")" : "")).join(", ");
+}
+function renderDbMenu(){
+  const m = $("#dbMenu"), ids = chatDbs();
+  m.innerHTML = "";
+  if (!conns.length) m.innerHTML = `<div class="empty">No connections saved yet.</div>`;
+  conns.forEach(x => {
+    const l = document.createElement("label");
+    const st = connStatus[x.id];
+    l.innerHTML = `<input type="checkbox"><span class="sdot ${st ? (st.ok ? "ok" : "bad") : ""}"></span><span></span><small></small>`;
+    l.querySelector("span:nth-of-type(2)").textContent = x.name;
+    l.querySelector("small").textContent = x.ssh ? "via SSH" : x.source === "env" ? ".env" : "";
+    const cb = l.querySelector("input"); cb.checked = ids.includes(x.id);
+    cb.onchange = () => {
+      let c = cur(); if (!c) { newChat(); c = cur(); }
+      c.dbs = cb.checked ? [...new Set([...chatDbs(c), x.id])] : chatDbs(c).filter(i => i !== x.id);
+      state.dbDefaults = [...c.dbs]; save(); render(); renderDbMenu();
+      if (cb.checked && !connStatus[x.id]) checkStatus([x.id]);
+    };
+    m.appendChild(l);
+  });
+  const sep = document.createElement("div"); sep.className = "sep"; m.appendChild(sep);
+  const b = document.createElement("button"); b.textContent = "Manage connections…";
+  b.onclick = () => { m.hidden = true; openDb(); }; m.appendChild(b);
+}
+$("#dbToggle").onclick = e => {
+  e.stopPropagation();
+  const m = $("#dbMenu");
+  if (!conns.length) { openDb(); return; }
+  m.hidden = !m.hidden;
+  if (!m.hidden) { renderDbMenu(); checkStatus(conns.filter(x => !connStatus[x.id]).map(x => x.id)); }
+};
+document.addEventListener("click", e => { if (!e.target.closest(".dbwrap")) $("#dbMenu").hidden = true; });
+
+/* ---------- connection manager ---------- */
+const dbDlg = $("#dbDialog");
+const SECRET_KEEP = "Saved – leave blank to keep";
+function renderConnList(){
+  const list = $("#connList"); if (!list) return;
+  list.innerHTML = "";
+  conns.forEach(x => {
+    const st = connStatus[x.id];
+    const d = document.createElement("div");
+    d.className = "conn" + (editing === x.id ? " active" : "");
+    d.innerHTML = `<span class="sdot ${st ? (st.ok ? "ok" : "bad") : ""}"></span><span></span><small></small>`;
+    d.querySelector("span:nth-of-type(2)").textContent = x.name;
+    d.querySelector("small").textContent = x.source === "env" ? ".env" : x.ssh ? "SSH" : "";
+    d.title = st ? (st.ok ? "Connected" : st.error) : "";
+    d.onclick = () => selectConn(x.id);
+    list.appendChild(d);
+  });
+  if (editing === null) {
+    const d = document.createElement("div"); d.className = "conn active";
+    d.innerHTML = `<span class="sdot"></span><span>New connection</span>`; list.appendChild(d);
+  }
+}
+function setState(cls, text){ const el = $("#dbState"); el.className = cls; el.textContent = text; }
+function describe(st){
+  if (!st) return "";
+  if (!st.ok) return "Can't connect: " + (st.error || "unknown error");
+  const i = st.info || st;
+  return `Connected to ${i.dbname} as ${i.user} on ${i.host}:${i.port}` +
+    (i.ssh ? ` via SSH ${i.ssh.user}@${i.ssh.host}${i.ssh.port != 22 ? ":" + i.ssh.port : ""}` : "") +
+    (i.server_version ? ` · PostgreSQL ${String(i.server_version).split(" ")[0]}` : "");
+}
+function fillForm(x){
+  const ro = x?.source === "env";
+  $("#envNote").hidden = !ro;
+  $("#cName").value = x?.name || ""; $("#dbHost").value = x?.host || ""; $("#dbPort").value = x?.port || "";
+  $("#dbName").value = x?.dbname || ""; $("#dbUser").value = x?.user || ""; $("#dbSsl").value = x?.sslmode || "";
+  $("#dbPass").value = ""; $("#dbPass").placeholder = x?.has_password ? SECRET_KEEP : "";
+  $("#cSchemas").value = x?.schemas || ""; $("#cContext").value = x?.context || "";
+  const ssh = x?.ssh;
+  $("#sshOn").checked = !!ssh; $("#sshHost").value = ssh?.host || ""; $("#sshPort").value = ssh?.port || "";
+  $("#sshUser").value = ssh?.user || ""; $("#sshKeyPath").value = ssh?.key_path || "";
+  $("#sshAuth").value = { "key file": "key_path", "pasted key": "key_text", "password": "password" }[ssh?.auth] || (ssh ? "agent" : "password");
+  ["#sshPass", "#sshKeyText", "#sshPassphrase"].forEach(sel => { $(sel).value = ""; $(sel).placeholder = ""; });
+  if (ssh) {
+    if (ssh.auth === "password") $("#sshPass").placeholder = SECRET_KEEP;
+    if (ssh.auth === "pasted key") $("#sshKeyText").placeholder = SECRET_KEEP;
+    if (ssh.auth === "key file" || ssh.auth === "pasted key") $("#sshPassphrase").placeholder = "Saved if set – leave blank to keep";
+  }
+  dbDlg.querySelectorAll(".dbform input, .dbform select, .dbform textarea").forEach(el => el.disabled = ro);
+  $("#connSave").hidden = ro; $("#connDelete").hidden = ro || !x; $("#connForce").hidden = true;
+  syncSsh();
+}
+async function selectConn(id){
+  editing = id; const x = conns.find(c => c.id === id);
+  fillForm(x); renderConnList();
+  $("#dbSchema").textContent = "—";
+  if (x?.error) { setState("err", x.error); return; }
+  setState("", "Checking…");
+  await checkStatus([id]);
+  if (editing !== id) return;
+  setState(connStatus[id].ok ? "ok" : "err", describe(connStatus[id]));
+  if (connStatus[id].ok) loadSchema(false);
+}
+function newConn(){
+  editing = null; fillForm(null); renderConnList();
+  setState("", dbInfo.available ? "Enter the connection details, then Test & save." :
+    "PostgreSQL support isn't installed on the server: pip install \"psycopg[binary]\"");
+  $("#dbSchema").textContent = "—"; $("#cName").focus();
+}
+async function loadSchema(refresh){
+  const el = $("#dbSchema"); if (editing === null) { el.textContent = "—"; return; }
+  el.textContent = "Loading…";
+  const r = await api(`/api/db/connections/${editing}/schema` + (refresh ? "?refresh=1" : ""));
+  el.textContent = r.error ? "Error: " + r.error : `${r.tables} table(s)\n\n${r.text}`;
+}
+async function openDb(){
+  dbDlg.showModal();
+  await loadConnections(); updateDbToggle();
+  const first = chatDbs()[0] || conns[0]?.id;
+  if (first) selectConn(first); else newConn();
+  checkStatus(conns.map(x => x.id));
+}
+function formBody(){
+  return { name: $("#cName").value, host: $("#dbHost").value, port: $("#dbPort").value, dbname: $("#dbName").value,
+    user: $("#dbUser").value, password: $("#dbPass").value, sslmode: $("#dbSsl").value,
+    schemas: $("#cSchemas").value, context: $("#cContext").value,
+    ssh_enabled: $("#sshOn").checked, ssh_host: $("#sshHost").value, ssh_port: $("#sshPort").value,
+    ssh_user: $("#sshUser").value, ssh_auth: $("#sshAuth").value, ssh_password: $("#sshPass").value,
+    ssh_key_path: $("#sshKeyPath").value, ssh_key_text: $("#sshKeyText").value, ssh_passphrase: $("#sshPassphrase").value };
+}
+async function saveConn(force){
+  const body = formBody(); body.force = force;
+  if (!dbInfo.available) { setState("err", "PostgreSQL support isn't installed on the server: pip install \"psycopg[binary]\""); return; }
+  if (body.ssh_enabled && !dbInfo.ssh_available) { setState("err", "SSH support isn't installed on the server: pip install paramiko"); return; }
+  const btn = $("#connSave"); btn.disabled = true;
+  setState("", force ? "Saving…" : body.ssh_enabled ? "Opening SSH tunnel and testing…" : "Testing connection…");
+  const isNew = editing === null;
+  const r = await api(isNew ? "/api/db/connections" : `/api/db/connections/${editing}`,
+                      { method: isNew ? "POST" : "PUT", body: JSON.stringify(body) });
+  btn.disabled = false;
+  if (r.error && !r.id) {
+    setState("err", (force ? "Couldn't save: " : "Can't connect: ") + r.error);
+    $("#connForce").hidden = force || /name|required|already exists|Enter the|Paste the|Use letters/i.test(r.error);
+    return;
+  }
+  $("#connForce").hidden = true;
+  editing = r.id; connStatus[r.id] = { ok: !!r.ok, error: r.error, info: r };
+  await loadConnections();
+  if (isNew) {   // a newly added database is turned on for the current chat
+    let c = cur(); if (!c) { newChat(); c = cur(); }
+    c.dbs = [...new Set([...chatDbs(c), r.id])]; state.dbDefaults = [...c.dbs]; save();
+  }
+  fillForm(conns.find(x => x.id === r.id)); renderConnList(); render();
+  setState(r.ok ? "ok" : "err", (r.ok ? "Saved. " : "Saved, but ") + describe(connStatus[r.id]).replace(/^C/, r.ok ? "C" : "c"));
+  if (r.ok) loadSchema(true);
+}
+$("#connSave").onclick = () => saveConn(false);
+$("#connForce").onclick = () => saveConn(true);
+$("#connNew").onclick = newConn;
+$("#connDelete").onclick = async () => {
+  const x = conns.find(c => c.id === editing); if (!x) return;
+  if (!confirm(`Delete the connection "${x.name}"? Chats using it will lose access to it.`)) return;
+  const r = await api(`/api/db/connections/${x.id}`, { method: "DELETE" });
+  if (r.error) { setState("err", r.error); return; }
+  delete connStatus[x.id];
+  state.chats.forEach(c => { if (c.dbs) c.dbs = c.dbs.filter(i => i !== x.id); });
+  state.dbDefaults = (state.dbDefaults || []).filter(i => i !== x.id); save();
+  await loadConnections(); render();
+  if (conns.length) selectConn(conns[0].id); else newConn();
+};
+$("#dbClose").onclick = () => dbDlg.close();
+$("#dbRefresh").onclick = () => loadSchema(true);
+function syncSsh(){
+  $("#sshFields").hidden = !$("#sshOn").checked;
+  const a = $("#sshAuth").value;
+  document.querySelectorAll("#sshFields [data-auth]").forEach(el => el.hidden = !el.dataset.auth.split(" ").includes(a));
+}
+$("#sshOn").onchange = syncSsh; $("#sshAuth").onchange = syncSsh;
+
+/* ---------- key file picker ---------- */
+const kp = $("#keyPicker");
+const KIND = { private: ["Private key", "🔑"], public: ["Public key", "📄"], ppk: ["PuTTY key", "📄"],
+               other: ["", "📄"], unreadable: ["Can't read", "🔒"] };
+let kpData = null;
+async function kpLoad(path, fallback){
+  $("#kpList").innerHTML = `<div class="kpmsg">Loading…</div>`;
+  const r = await api("/api/fs/keys" + (path ? "?path=" + encodeURIComponent(path) : ""));
+  if (r.error && fallback && path) return kpLoad(null, false);   // typed path not browsable: start in the default folder
+  if (r.error) {
+    if (!kpData) { $("#kpPath").textContent = path || ""; $("#kpUp").disabled = true; }
+    $("#kpList").innerHTML = `<div class="kpmsg err"></div>`; $("#kpList .kpmsg").textContent = r.error;
+    return;
+  }
+  kpData = r; kpRender();
+}
+function kpRender(){
+  const r = kpData, all = $("#kpAll").checked, list = $("#kpList");
+  const pb = $("#kpPath"); pb.textContent = r.path; pb.scrollLeft = pb.scrollWidth; $("#kpUp").disabled = !r.parent;
+  $("#kpWhere").textContent = `Files on ${r.host}, as user ${r.user}. Browsing is limited to ${r.root}.`;
+  list.innerHTML = "";
+  const add = (icon, name, tag, tagCls, onclick, title) => {
+    const d = document.createElement("div"); d.className = "kpitem" + (onclick ? "" : " dim");
+    d.innerHTML = `<span class="ic"></span><span class="nm"></span>` + (tag ? `<span class="tag ${tagCls}"></span>` : "");
+    d.querySelector(".ic").textContent = icon; d.querySelector(".nm").textContent = name;
+    if (tag) d.querySelector(".tag").textContent = tag;
+    if (title) d.title = title;
+    if (onclick) d.onclick = onclick;
+    list.appendChild(d);
+  };
+  r.dirs.forEach(x => add("📁", x.name, "", "", () => kpLoad(x.path)));
+  const files = all ? r.files : r.files.filter(f => f.kind === "private");
+  files.forEach(f => {
+    const [label, icon] = KIND[f.kind] || KIND.other;
+    const pick = f.kind === "private" || (all && f.kind === "other")
+      ? () => { $("#sshKeyPath").value = f.path; kp.close(); } : null;
+    add(icon, f.name, label, f.kind, pick,
+        f.kind === "public" ? "Public key: choose the private key (same name without .pub)" :
+        f.kind === "ppk" ? "PuTTY key: export it to OpenSSH format in PuTTYgen first" :
+        f.kind === "unreadable" ? "The app's user can't read this file" : f.path);
+  });
+  if (!r.dirs.length && !files.length) {
+    const hidden = r.files.length - files.length;
+    list.innerHTML = `<div class="kpmsg">${hidden ? `No private keys here (${hidden} other file${hidden > 1 ? "s" : ""} hidden — tick “Show all files”).` : "This folder is empty."}</div>`;
+  }
+  if (r.truncated) { const m = document.createElement("div"); m.className = "kpmsg"; m.textContent = "Only the first 500 items are shown."; list.appendChild(m); }
+}
+$("#sshBrowse").onclick = () => {
+  kpData = null; kp.showModal();
+  const cur = $("#sshKeyPath").value.trim();
+  kpLoad(cur ? cur.replace(/[\\/][^\\/]*$/, "") || cur : null, true);
+};
+$("#kpUp").onclick = () => kpData?.parent && kpLoad(kpData.parent);
+$("#kpAll").onchange = () => kpData && kpRender();
+$("#kpCancel").onclick = () => kp.close();
+$("#openDb").onclick = openDb;
+
+function regenerate(){
+  const c = cur(); if (controller || !c) return;
+  if (c.messages.at(-1)?.role === "assistant") c.messages.pop();
+  send(null);
+}
+function editMessage(i, wrap){
+  const c = cur(); if (controller || !c || wrap.querySelector(".editbox")) return;
+  const old = c.messages[i];
+  const bubble = wrap.querySelector(".bubble"), tools = wrap.querySelector(".tools");
+  const later = c.messages.length - i - 1;
+  const box = document.createElement("div"); box.className = "editbox";
+  box.innerHTML = `<textarea aria-label="Edit message" spellcheck="true"></textarea>
+    <div class="editbar"><span class="edithint"></span>
+    <button class="btn" type="button">Cancel</button><button class="btn primary" type="button">Save &amp; send</button></div>`;
+  const ta = box.querySelector("textarea"), hint = box.querySelector(".edithint");
+  const [cancelBtn, saveBtn] = box.querySelectorAll("button");
+  const defaultHint = "Ctrl+Enter to send · Esc to cancel" + (later ? ` · replaces the ${later} message${later > 1 ? "s" : ""} after this` : "");
+  hint.textContent = defaultHint;
+  ta.value = old.content;
+  const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight + 2, window.innerHeight * 0.6) + "px"; };
+  const close = () => { box.remove(); wrap.classList.remove("editing"); if (bubble) bubble.hidden = false; tools.hidden = false; };
+  const submit = () => {
+    const t = ta.value.trim();
+    if (!t && !old.attachments?.length) { hint.textContent = "Type a message first."; hint.classList.add("err"); ta.focus(); return; }
+    if (controller) return;
+    c.messages = c.messages.slice(0, i);
+    send(t, old.attachments);
+  };
+  ta.addEventListener("input", () => { grow(); if (hint.classList.contains("err")) { hint.classList.remove("err"); hint.textContent = defaultHint; } });
+  ta.addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); submit(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
+  });
+  cancelBtn.onclick = close; saveBtn.onclick = submit;
+  wrap.classList.add("editing"); if (bubble) bubble.hidden = true; tools.hidden = true;
+  wrap.insertBefore(box, tools);
+  grow(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  box.scrollIntoView({ block: "nearest" });
+}
+
+function setBusy(b){
+  $("#sendIcon").innerHTML = b ? ICON_STOP : ICON_SEND;
+  $("#send").setAttribute("aria-label", b ? "Stop" : "Send");
+  updateSend();
+}
+function updateSend(){
+  if (controller) { $("#send").disabled = false; return; }
+  const uploading = pending.some(p => p.status === "uploading");
+  const ready = pending.some(p => p.status === "ready");
+  $("#send").disabled = uploading || (!$("#input").value.trim() && !ready);
+}
+
+/* ---------- input ---------- */
+const input = $("#input");
+function autosize(){ input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.4) + "px"; }
+input.addEventListener("input", () => { autosize(); updateSend(); });
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
+});
+function submit(){
+  if (controller) { controller.abort(); return; }
+  if (pending.some(p => p.status === "uploading")) return;
+  const atts = pending.filter(p => p.status === "ready").map(p => p.meta);
+  const t = input.value.trim(); if (!t && !atts.length) return;
+  pending.forEach(p => p.preview && URL.revokeObjectURL(p.preview));
+  pending = []; renderPending();
+  input.value = ""; autosize(); send(t, atts);
+}
+$("#attachBtn").onclick = () => $("#fileInput").click();
+$("#fileInput").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
+input.addEventListener("paste", e => {
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length) { e.preventDefault(); addFiles(files); }
+});
+let dragDepth = 0;
+window.addEventListener("dragenter", e => { if (e.dataTransfer?.types.includes("Files")) { dragDepth++; $("#drop").classList.add("on"); } });
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop").classList.remove("on"); } });
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#drop").classList.remove("on"); if (e.dataTransfer?.files.length) addFiles(e.dataTransfer.files); });
+$("#send").onclick = submit;
+$("#newChat").onclick = newChat;
+$("#toggleSide").onclick = () => $("#sidebar").classList.toggle("hidden");
+$("#clearAll").onclick = () => { if (state.chats.length) deleteChats(state.chats.slice()); else notify("There are no chats to delete.", true); };
+$("#model").onchange = e => { state.model = e.target.value; save(); };
+
+/* ---------- files: remove, delete, storage ---------- */
+function ask({ title, body = "", ok = "Delete", check = null, note = "" }){
+  return new Promise(res => {
+    const d = $("#askDlg"); let done = false;
+    $("#askTitle").textContent = title; $("#askBody").textContent = body;
+    $("#askNote").textContent = note; $("#askNote").hidden = !note;
+    $("#askCheckWrap").hidden = !check;
+    if (check) { $("#askCheckText").textContent = check.label; $("#askCheck").checked = !!check.checked; $("#askCheck").disabled = !!check.disabled; }
+    $("#askOk").textContent = ok;
+    const finish = v => { if (done) return; done = true; if (d.open) d.close(); res(v); };
+    $("#askOk").onclick = () => finish({ ok: true, checked: !!check && !check.disabled && $("#askCheck").checked });
+    $("#askCancel").onclick = () => finish({ ok: false });
+    d.onclose = () => finish({ ok: false });   // Esc
+    d.showModal(); $("#askCancel").focus();
+  });
+}
+const usesFile = (c, id) => c.messages.some(m => (m.attachments || []).some(a => a.id === id));
+function chatFiles(c){   // unique attachments still in the chat
+  const seen = new Map();
+  c.messages.forEach(m => (m.attachments || []).forEach(a => { if (!seen.has(a.id)) seen.set(a.id, a); }));
+  return [...seen.values()];
+}
+let fileIndex = {};       // id -> server entry from /api/files
+async function loadFileIndex(){
+  const r = await api("/api/files");
+  if (!r.error) fileIndex = Object.fromEntries(r.files.map(f => [f.id, f]));
+  return r;
+}
+const diskOf = ids => ids.reduce((n, id) => n + (fileIndex[id]?.disk || 0), 0);
+function detach(c, id){   // take a file out of a chat, leaving a "removed" note for the model and the reader
+  let hit = false;
+  c.messages.forEach(m => {
+    const a = (m.attachments || []).find(x => x.id === id); if (!a) return;
+    m.attachments = m.attachments.filter(x => x.id !== id); if (!m.attachments.length) delete m.attachments;
+    (m.removed ||= []).push(a.name); hit = true;
+  });
+  return hit;
+}
+async function serverDelete(ids){   // delete uploads on the server and take them out of every chat in this browser
+  if (!ids.length) return { deleted: [], freed: 0 };
+  const r = await api("/api/files/delete", { method: "POST", body: JSON.stringify({ ids }) });
+  if (r.error) { notify("Couldn't delete files: " + r.error, true); return null; }
+  r.failed ||= [];
+  r.deleted.forEach(id => { state.chats.forEach(c => detach(c, id)); delete fileIndex[id]; });
+  save(); render();
+  return r;
+}
+function deleteSummary(r, okText){   // one toast for the outcome, errors first
+  if (r.failed.length) {
+    const name = id => fileIndex[id]?.name || stFiles.find(f => f.id === id)?.name || "a file";
+    notify(`${r.failed.length === 1 ? `${name(r.failed[0].id)} wasn't deleted` : `${r.failed.length} files weren't deleted`}. ${r.failed[0].error}` +
+           (r.deleted.length ? ` (${r.deleted.length} other${r.deleted.length > 1 ? "s were" : " was"} deleted.)` : ""), true);
+  } else notify(okText);
+}
+async function removeAttachment(c, a){
+  if (!c) return;
+  if (controller) { notify("Wait for the reply to finish first.", true); return; }
+  await loadFileIndex();
+  const others = state.chats.filter(x => x !== c && usesFile(x, a.id));
+  const onServer = !!fileIndex[a.id];
+  const check = !onServer ? null : others.length ? { label: "Also delete it from the server", checked: false, disabled: true }
+    : { label: `Also delete it from the server (frees ${fmtSize(fileIndex[a.id].disk)})`, checked: true };
+  const note = others.length ? `It stays on the server because it's also used in “${others[0].title || "another chat"}”${others.length > 1 ? ` and ${others.length - 1} more` : ""}.` : "";
+  const r = await ask({ title: `Remove ${a.name}?`, ok: "Remove", check, note,
+    body: "The file is taken out of this chat: the model won't see it or query its table any more, and is told it was removed. Earlier answers stay as they are." });
+  if (!r.ok) return;
+  detach(c, a.id); save(); render();
+  if (r.checked) {
+    const d = await serverDelete([a.id]);
+    if (d) deleteSummary(d, `Removed ${a.name} and deleted it from the server (${fmtSize(d.freed)} freed).`);
+  } else notify(`Removed ${a.name} from this chat.`);
+}
+async function deleteChats(chats){
+  if (controller) { notify("Wait for the reply to finish first.", true); return; }
+  await loadFileIndex();
+  const keep = state.chats.filter(c => !chats.includes(c));
+  const ids = [...new Set(chats.flatMap(c => chatFiles(c).map(a => a.id)))].filter(id => fileIndex[id]);
+  const shared = ids.filter(id => keep.some(k => usesFile(k, id)));
+  const own = ids.filter(id => !shared.includes(id));
+  const one = chats.length === 1;
+  const check = own.length ? { checked: true,
+    label: `Also delete ${one ? "its" : "their"} ${own.length === 1 ? "uploaded file" : own.length + " uploaded files"} from the server (${fmtSize(diskOf(own))})` } : null;
+  const note = shared.length ? `${shared.length} file${shared.length > 1 ? "s are" : " is"} also used in other chats and will be kept.` : "";
+  const r = await ask({ check, note, ok: "Delete",
+    title: one ? `Delete “${chats[0].title || "New chat"}”?` : `Delete all ${chats.length} chats?`,
+    body: one ? "The chat is removed from this browser." : "All chats are removed from this browser. Use Export all chats first if you might need them." });
+  if (!r.ok) return;
+  state.chats = keep;
+  if (!keep.some(c => c.id === state.current)) state.current = keep[0]?.id || null;
+  save(); render();
+  const what = one ? "Chat deleted" : `${chats.length} chats deleted`;
+  if (r.checked) {
+    const d = await serverDelete(own);
+    if (d) deleteSummary(d, `${what}, with ${d.deleted.length} file${d.deleted.length === 1 ? "" : "s"} (${fmtSize(d.freed)} freed).`);
+  } else notify(what + ".");
+}
+
+/* Storage panel */
+const stDlg = $("#storageDlg");
+let stFiles = [], stSel = new Set();
+function openChat(id){ if (controller) return; state.current = id; save(); render(); stDlg.close(); }
+function renderStorage(){
+  const filter = $("#stFilter").value, list = $("#stList");
+  const rows = stFiles.map(f => ({ ...f, chats: state.chats.filter(c => usesFile(c, f.id)) }))
+                      .filter(f => filter === "all" || (!f.chats.length && !f.processing));
+  stSel = new Set([...stSel].filter(id => stFiles.some(f => f.id === id)));
+  const total = stFiles.reduce((n, f) => n + f.disk, 0), unused = stFiles.filter(f => !f.processing && !state.chats.some(c => usesFile(c, f.id)));
+  const busy = stFiles.filter(f => f.processing).length;
+  $("#stSummary").textContent = `${stFiles.length} file${stFiles.length === 1 ? "" : "s"} · ${fmtSize(total)} on disk · ${unused.length} unused (${fmtSize(unused.reduce((n, f) => n + f.disk, 0))})` +
+    (busy ? ` · ${busy} still uploading` : "");
+  $("#stDeleteUnused").disabled = !unused.length;
+  $("#stDeleteSel").disabled = !stSel.size;
+  $("#stDeleteSel").textContent = stSel.size ? `Delete selected (${stSel.size})` : "Delete selected";
+  list.innerHTML = "";
+  if (!rows.length) { list.innerHTML = `<div class="stempty">${stFiles.length ? "No unused files." : "No uploaded files on the server."}</div>`; return; }
+  const head = document.createElement("div"); head.className = "strow head";
+  head.innerHTML = `<input type="checkbox" aria-label="Select all shown"><span>File</span><span class="num">On disk</span><span class="dt">Uploaded</span><span class="use">Used in</span><span></span>`;
+  const pickable = rows.filter(f => !f.processing);
+  const all = head.querySelector("input"); all.checked = pickable.length > 0 && pickable.every(f => stSel.has(f.id));
+  all.onchange = () => { pickable.forEach(f => all.checked ? stSel.add(f.id) : stSel.delete(f.id)); renderStorage(); };
+  list.appendChild(head);
+  rows.forEach(f => {
+    const r = document.createElement("div"); r.className = "strow";
+    const kind = f.processing ? "still uploading…" : f.incomplete ? "leftover from an interrupted upload or delete" : f.tables?.length ? tableNote(f).replace(/^ · /, "") : f.kind === "zip" ? `zip${f.stats ? ", " + f.stats.files + " files" : ""}` : f.kind;
+    r.innerHTML = `<input type="checkbox"><span class="nm"><b></b><small></small></span><span class="num"></span><span class="dt"></span><span class="use"></span><button class="del" title="Delete" aria-label="Delete">🗑</button>`;
+    const cb = r.querySelector("input"); cb.checked = stSel.has(f.id); cb.setAttribute("aria-label", "Select " + f.name);
+    cb.onchange = () => { cb.checked ? stSel.add(f.id) : stSel.delete(f.id); renderStorage(); };
+    r.querySelector("b").textContent = f.name; r.querySelector("b").title = f.name;
+    r.querySelector("small").textContent = f.processing || f.incomplete ? kind : `${kind} · ${fmtSize(f.size)} original`;
+    r.querySelector(".num").textContent = fmtSize(f.disk);
+    r.querySelector(".dt").textContent = new Date(f.uploaded * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+    const use = r.querySelector(".use");
+    if (f.processing) { use.innerHTML = "<em>—</em>"; cb.disabled = true; r.querySelector(".del").disabled = true; r.querySelector(".del").title = "Still uploading"; }
+    else if (!f.chats.length) use.innerHTML = "<em>Not used here</em>";
+    f.chats.forEach(c => { const b = document.createElement("button"); b.textContent = c.title || "New chat"; b.title = "Open this chat"; b.onclick = () => openChat(c.id); use.appendChild(b); });
+    r.querySelector(".del").onclick = () => storageDelete([f.id]);
+    list.appendChild(r);
+  });
+}
+async function storageDelete(ids){
+  if (controller) { notify("Wait for the reply to finish first.", true); return; }
+  const files = stFiles.filter(f => ids.includes(f.id));
+  const used = files.filter(f => state.chats.some(c => usesFile(c, f.id)));
+  const size = files.reduce((n, f) => n + f.disk, 0);
+  const r = await ask({ ok: "Delete",
+    title: files.length === 1 ? `Delete ${files[0].name}?` : `Delete ${files.length} files?`,
+    body: `This frees ${fmtSize(size)} on the server and can't be undone.` +
+      (used.length ? `\n${used.length === 1 && files.length === 1 ? "It is" : used.length + " of them are"} used in chats here; ${used.length === 1 && files.length === 1 ? "it" : "they"}'ll be removed from those chats.` : "") });
+  if (!r.ok) return;
+  const d = await serverDelete(ids);
+  if (!d) return;
+  stSel = new Set([...stSel].filter(id => !d.deleted.includes(id)));
+  deleteSummary(d, `Deleted ${d.deleted.length} file${d.deleted.length === 1 ? "" : "s"} (${fmtSize(d.freed)} freed).`);
+  const fresh = await loadFileIndex();   // show what's really on the server now
+  stFiles = fresh.error ? stFiles.filter(f => !d.deleted.includes(f.id)) : fresh.files;
+  renderStorage();
+}
+async function openStorage(){
+  stSel = new Set(); $("#stList").innerHTML = `<div class="stempty">Loading…</div>`; $("#stSummary").textContent = "Loading…";
+  stDlg.showModal();
+  const r = await loadFileIndex();
+  if (r.error) { $("#stList").innerHTML = `<div class="stempty"></div>`; $("#stList .stempty").textContent = "Couldn't load files: " + r.error; return; }
+  stFiles = r.files; renderStorage();
+}
+$("#openStorage").onclick = openStorage;
+$("#stClose").onclick = () => stDlg.close();
+$("#stFilter").onchange = renderStorage;
+$("#stDeleteSel").onclick = () => storageDelete([...stSel]);
+$("#stDeleteUnused").onclick = () => storageDelete(stFiles.filter(f => !f.processing && !state.chats.some(c => usesFile(c, f.id))).map(f => f.id));
+
+/* ---------- export / import ---------- */
+const EXPORT_FORMAT = "datasquint-chats";
+let toastTimer = null;
+function notify(text, isErr){
+  if (isErr) serverLog("shown to user", text);
+  const t = $("#toast"); if (!t) return;
+  t.textContent = text; t.className = isErr ? "err" : ""; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, isErr ? 7000 : 4000);
+}
+function download(name, data, type){
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement("a"); a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+const slug = s => (s || "chat").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "chat";
+const today = () => new Date().toISOString().slice(0, 10);
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const escAttr = t => esc(String(t)).replace(/"/g, "&quot;");
+
+function exportable(c){   // a chat plus the names of its databases, so imports can reconnect them by name
+  return { ...c, db_names: chatDbs(c).map(connName) };
+}
+function exportJSON(chats, filename){
+  const data = { format: EXPORT_FORMAT, version: 1, app_version: APP_VERSION, exported_at: new Date().toISOString(), chats: chats.map(exportable) };
+  download(filename, JSON.stringify(data, null, 2), "application/json");
+}
+
+/* Import: accept our export, a bare array of chats, or a single chat; keep only known fields */
+const FILE_ID = /^[0-9a-f]{32}$/;
+function cleanResult(r){
+  r = r && typeof r === "object" ? r : {};
+  const rows = Array.isArray(r.rows) ? r.rows.filter(Array.isArray).slice(0, 100)
+    .map(row => row.map(v => v === null || typeof v === "number" || typeof v === "boolean" ? v : String(v))) : [];
+  return { sql: String(r.sql || ""), error: r.error ? String(r.error) : undefined, db_name: r.db_name ? String(r.db_name) : undefined,
+           columns: Array.isArray(r.columns) ? r.columns.map(String) : [], rows, row_count: +r.row_count || rows.length,
+           truncated: !!r.truncated, ms: +r.ms || 0, rows_stored: rows.length };
+}
+function cleanChat(c){
+  if (!c || typeof c !== "object" || !Array.isArray(c.messages)) return null;
+  const messages = [];
+  for (const m of c.messages) {
+    if (!m || !["user", "assistant"].includes(m.role) || typeof m.content !== "string") continue;
+    const out = { role: m.role, content: m.content };
+    if (Array.isArray(m.attachments)) {
+      const atts = m.attachments.filter(a => a && FILE_ID.test(a.id)).map(a => ({
+        id: a.id, name: String(a.name || "file"), mime: String(a.mime || ""), size: +a.size || 0,
+        kind: ["image", "text", "zip"].includes(a.kind) ? a.kind : "text", truncated: !!a.truncated,
+        ...(a.stats && typeof a.stats === "object" ? { stats: { files: +a.stats.files || 0, skipped: +a.stats.skipped || 0,
+            images: +a.stats.images || 0, trimmed: +a.stats.trimmed || 0 } } : {}),
+        ...(Array.isArray(a.tables) && a.tables.length ? { tables: a.tables.slice(0, 50).map(t => ({
+            rows: +t?.rows || 0, columns: +t?.columns || 0, sheet: String(t?.sheet || "") })) } : {}) }));
+      if (atts.length) out.attachments = atts;
+    }
+    if (m.kind === "sql" && Array.isArray(m.results)) { out.kind = "sql"; out.results = m.results.map(cleanResult); }
+    if (m.error) out.error = true;
+    if (Array.isArray(m.removed) && m.removed.length) out.removed = m.removed.slice(0, 50).map(n => String(n).slice(0, 200));
+    if (+m.parts > 1) out.parts = +m.parts;
+    messages.push(out);
+  }
+  if (!messages.length) return null;
+  const names = Array.isArray(c.db_names) ? c.db_names.map(n => String(n).toLowerCase()) : [];
+  const dbs = [...new Set([
+    ...(Array.isArray(c.dbs) ? c.dbs.filter(id => conns.some(x => x.id === id)) : []),
+    ...conns.filter(x => names.includes(x.name.toLowerCase())).map(x => x.id)])];
+  return { id: typeof c.id === "string" && c.id ? c.id.slice(0, 40) : uid(),
+           title: String(c.title || messages[0].content.slice(0, 48) || "Imported chat").slice(0, 200), messages, dbs };
+}
+async function importChats(file){
+  if (controller) { notify("Wait for the current reply to finish first.", true); return; }
+  let data;
+  try { data = JSON.parse(await file.text()); }
+  catch { notify(`${file.name} isn't a valid JSON file.`, true); return; }
+  const list = Array.isArray(data) ? data : Array.isArray(data?.chats) ? data.chats : data?.messages ? [data] : null;
+  if (!list) { notify(`${file.name} doesn't contain Datasquint chats.`, true); return; }
+  const before = state.chats.slice(), beforeCurrent = state.current;
+  let added = 0, same = 0, bad = 0;
+  const incoming = [];
+  for (const raw of list) {
+    const c = cleanChat(raw);
+    if (!c) { bad++; continue; }
+    const existing = state.chats.find(x => x.id === c.id);
+    if (existing) {
+      // compare after the same clean-up, so field order or dropped extras don't make identical chats look different
+      if (JSON.stringify(cleanChat(existing)?.messages) === JSON.stringify(c.messages)) { same++; continue; }
+      c.id = uid(); c.title += " (imported)";
+    }
+    incoming.push(c); added++;
+  }
+  if (!added) {
+    notify(same ? `Nothing new: ${same} chat${same > 1 ? "s are" : " is"} already here.` : "No chats found in that file.", !same);
+    return;
+  }
+  state.chats = [...incoming, ...state.chats];
+  state.current = incoming[0].id;
+  if (!save()) { state.chats = before; state.current = beforeCurrent; render(); return; }
+  render();
+  notify(`Imported ${added} chat${added > 1 ? "s" : ""}` + (same ? `, skipped ${same} already here` : "") +
+         (bad ? `, ignored ${bad} unreadable` : "") + ".");
+  const used = [...new Set(incoming.flatMap(c => c.dbs))]; if (used.length) checkStatus(used);
+}
+
+/* HTML export: one self-contained page (styles inline, images embedded, no scripts) */
+const EXPORT_CSS = `
+:root{--bg:#fff;--ink:#1b2430;--muted:#66727f;--line:#dfe3e8;--user:#e8eff4;--code:#f4f6f8;--danger:#b4443a;--accent:#2f6f8f}
+@media (prefers-color-scheme:dark){:root{--bg:#141a21;--ink:#e3e8ee;--muted:#8c99a6;--line:#2a3440;--user:#223040;--code:#1d252f;--danger:#e07a70;--accent:#5ba3c6}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:820px;margin:0 auto;padding:32px 20px 48px}
+header{border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:24px}
+h1{font-size:22px;margin:0 0 4px;font-weight:600}
+.meta{color:var(--muted);font-size:13px}
+.msg{margin:0 0 22px}
+.who{font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600}
+.msg.user .bubble{background:var(--user);padding:10px 14px;border-radius:12px;white-space:pre-wrap;word-wrap:break-word}
+.bubble>:first-child{margin-top:0}.bubble>:last-child{margin-bottom:0}
+.bubble.error{color:var(--danger)}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;font:13px/1.5 ui-monospace,Consolas,monospace}
+code{font-family:ui-monospace,Consolas,monospace;font-size:.92em}
+:not(pre)>code{background:var(--code);padding:1px 5px;border-radius:4px}
+table{border-collapse:collapse;font-size:13px;margin:8px 0}
+th,td{border:1px solid var(--line);padding:5px 9px;text-align:left;vertical-align:top}
+th{background:var(--code)}
+blockquote{border-left:3px solid var(--line);margin-left:0;padding-left:12px;color:var(--muted)}
+.atts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.atts img{max-width:320px;max-height:240px;border-radius:8px;border:1px solid var(--line)}
+.file{display:inline-block;border:1px solid var(--line);border-radius:8px;padding:5px 10px;font-size:13px;color:var(--muted)}
+.sql{border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 10px}
+.sql .head{background:var(--code);padding:7px 12px;font-size:13px;border-bottom:1px solid var(--line)}
+.sql .head span{color:var(--muted)}
+.sql pre{margin:0;border:0;border-radius:0;border-bottom:1px solid var(--line)}
+.sql .body{padding:8px 12px;overflow-x:auto}
+.sql .err{color:var(--danger);font:13px ui-monospace,Consolas,monospace;white-space:pre-wrap}
+.null{color:var(--muted);font-style:italic}
+.note{color:var(--muted);font-size:12px}
+footer{border-top:1px solid var(--line);margin-top:32px;padding-top:12px;color:var(--muted);font-size:12px}
+@media print{body{background:#fff;color:#000}main{max-width:none;padding:0}pre,.sql,table,img{break-inside:avoid}}`;
+
+function sqlHTML(r){
+  const meta = r.error ? "failed" : `${r.row_count}${r.truncated ? "+" : ""} row${r.row_count === 1 && !r.truncated ? "" : "s"} · ${r.ms} ms`;
+  let body;
+  if (r.error) body = `<div class="err">${esc(r.error)}</div>`;
+  else if (!r.columns?.length) body = `<div class="note">No columns returned.</div>`;
+  else {
+    const head = r.columns.map(c => `<th>${esc(c)}</th>`).join("");
+    const rows = (r.rows || []).map(row => "<tr>" + row.map(v => v === null ? `<td class="null">NULL</td>` : `<td>${esc(String(v))}</td>`).join("") + "</tr>").join("");
+    body = `<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>` +
+      (!r.row_count ? `<div class="note">No rows.</div>` : (r.rows_stored < r.row_count ? `<div class="note">Showing ${r.rows_stored} of ${r.row_count}${r.truncated ? "+" : ""} rows.</div>` : ""));
+  }
+  return `<div class="sql"><div class="head">Query result${r.db_name ? ` <span>· ${esc(r.db_name)}</span>` : ""} <span>· ${esc(meta)}</span></div>` +
+         `<pre><code>${esc(r.sql)}</code></pre><div class="body">${body}</div></div>`;
+}
+async function imageDataUrl(id){
+  try {
+    const r = await fetch("/files/" + id); if (!r.ok) return null;
+    const b = await r.blob();
+    return await new Promise(res => { const f = new FileReader(); f.onload = () => res(f.result); f.onerror = () => res(null); f.readAsDataURL(b); });
+  } catch { return null; }
+}
+async function chatHTML(c){
+  const parts = [];
+  for (const m of c.messages) {
+    if (m.kind === "sql") { parts.push(`<section class="msg">${m.results.map(sqlHTML).join("")}</section>`); continue; }
+    let atts = "";
+    if (m.attachments?.length) {
+      const items = [];
+      for (const a of m.attachments) {
+        const url = a.kind === "image" ? await imageDataUrl(a.id) : null;
+        items.push(url ? `<img src="${escAttr(url)}" alt="${escAttr(a.name)}">`
+          : `<span class="file">${esc(a.name)} · ${fmtSize(a.size)}${a.stats ? ` · ${a.stats.files} files` : ""}${a.kind === "image" ? " (image unavailable)" : ""}</span>`);
+      }
+      atts = `<div class="atts">${items.join("")}</div>`;
+    }
+    const body = m.role === "user" ? (m.content ? `<div class="bubble">${esc(m.content)}</div>` : "")
+                                   : `<div class="bubble${m.error ? " error" : ""}">${md(m.content)}</div>`;
+    const note = (m.parts > 1 ? `<div class="note">Read in ${m.parts} parts</div>` : "") +
+      (m.removed?.length ? `<div class="note">Removed from chat: ${esc(m.removed.join(", "))}</div>` : "");
+    parts.push(`<section class="msg ${m.role}"><div class="who">${m.role === "user" ? "You" : "Assistant"}</div>${atts}${body}${note}</section>`);
+  }
+  const dbs = chatDbs(c).map(connName);
+  const when = new Date().toLocaleString();
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(c.title || "Chat")} – Datasquint</title><style>${EXPORT_CSS}</style></head>
+<body><main><header><h1>${esc(c.title || "Chat")}</h1>
+<div class="meta">Exported from Datasquint ${esc(APP_VERSION)} on ${esc(when)}${dbs.length ? ` · Database${dbs.length > 1 ? "s" : ""}: ${esc(dbs.join(", "))}` : ""}</div></header>
+${parts.join("\n")}
+<footer>${plural(c.messages.filter(m => m.kind !== "sql").length, "message")} · ${plural(c.messages.filter(m => m.kind === "sql").length, "query result")}</footer>
+</main></body></html>`;
+}
+
+const expMenu = $("#exportMenu");
+$("#exportBtn").onclick = e => { e.stopPropagation(); if (!cur()?.messages.length) return; expMenu.hidden = !expMenu.hidden; };
+document.addEventListener("click", e => { if (!e.target.closest(".expwrap")) expMenu.hidden = true; });
+$("#expHtml").onclick = async () => {
+  expMenu.hidden = true;
+  const c = cur(); if (!c?.messages.length) return;
+  if (controller) { notify("Wait for the reply to finish first.", true); return; }
+  notify("Preparing HTML…");
+  download(`${slug(c.title)}-${today()}.html`, await chatHTML(c), "text/html");
+  notify("Chat exported as HTML.");
+};
+$("#expJson").onclick = () => {
+  expMenu.hidden = true;
+  const c = cur(); if (!c?.messages.length) return;
+  if (controller) { notify("Wait for the reply to finish first.", true); return; }
+  exportJSON([c], `${slug(c.title)}-${today()}.json`);
+  notify("Chat exported. Use Import chats to load it again.");
+};
+$("#exportAll").onclick = () => {
+  const chats = state.chats.filter(c => c.messages.length);
+  if (!chats.length) { notify("There are no chats to export yet.", true); return; }
+  exportJSON(chats, `datasquint-chats-${today()}.json`);
+  notify(`Exported ${chats.length} chat${chats.length > 1 ? "s" : ""}.`);
+};
+$("#importBtn").onclick = () => $("#importFile").click();
+$("#importFile").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if (f) importChats(f); };
+
+/* ---------- Python scripts ---------- */
+function chatQueries(c = cur()){
+  const out = [], seen = new Set();
+  for (const m of c?.messages || []) for (const r of m.results || [])
+    if (r.sql && !r.error && !seen.has(r.sql)) { seen.add(r.sql); out.push({ sql: r.sql }); }
+  return out;
+}
+async function downloadScript(queries, title, btn){
+  const c = cur(); if (!c) return;
+  if (!queries.length) { notify("This chat has no successful queries yet. Run one first.", true); return; }
+  const label = btn?.textContent; if (btn) { btn.disabled = true; btn.textContent = "Preparing…"; }
+  try {
+    const res = await fetch("/api/script", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, queries, dbs: chatDbs(c), files: browseFileIds(c) }) });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || `Server returned ${res.status}`); }
+    const name = (res.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || `${slug(title)}.py`;
+    download(name, await res.text(), "text/x-python");
+    const n = +res.headers.get("X-Queries") || queries.length;
+    notify(`Saved ${name} with ${n} quer${n === 1 ? "y" : "ies"}. Put it next to the original data files and run: python ${name}`);
+  } catch (e) { notify(`Couldn't make the script: ${e.message}`, true); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = label; } }
+}
+$("#expPy").onclick = () => {
+  expMenu.hidden = true;
+  const c = cur(); if (!c?.messages.length) return;
+  downloadScript(chatQueries(c), c.title || "Datasquint queries");
+};
+
+/* ---------- table browser ---------- */
+const tbDlg = $("#tablesDlg");
+let tb = { sources: [], sel: null, offset: 0, limit: 50, sort: null, desc: false, q: "", seq: 0, timer: null, last: null };
+function browseFileIds(c = cur()){
+  // sent attachments plus files that finished uploading but aren't sent yet, so they can be peeked at first
+  const ids = chatFileIds(c);
+  for (const p of pending) if (p.status === "ready" && p.meta?.id && !ids.includes(p.meta.id)) ids.push(p.meta.id);
+  return ids;
+}
+async function openTables(refresh = false){
+  const c = cur();
+  if (!tbDlg.open) tbDlg.showModal();
+  $("#tbList").innerHTML = `<div class="sqlnote">Loading…</div>`;
+  if (!refresh) { tb.sel = null; $("#tbMain").innerHTML = ""; }
+  try {
+    const res = await fetch("/api/tables", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dbs: chatDbs(c), files: browseFileIds(c), refresh }) });
+    tb.sources = (await res.json()).sources || [];
+  } catch (e) { tb.sources = []; notify(`Couldn't load tables: ${e.message}`, true); }
+  renderTableList();
+  if (tb.sel && !findTable(tb.sel.src, tb.sel.name)) tb.sel = null;
+  if (!tb.sel) {
+    const first = tb.sources.find(s => s.tables.length);
+    if (first) selectTable(first.id, first.tables[0].name); else renderTableMain();
+  } else loadPreview();
+}
+function findTable(src, name){ return tb.sources.find(s => s.id === src)?.tables.find(t => t.name === name); }
+function rowsText(t){
+  if (t.rows == null) return t.view ? "view" : "rows unknown";
+  return `${t.view ? "view · " : ""}${t.view ? "" : "~"}${(+t.rows).toLocaleString()} rows`.replace(/^~/, t.file ? "" : "~");
+}
+function renderTableList(){
+  const box = $("#tbList"), f = $("#tbFind").value.trim().toLowerCase();
+  box.innerHTML = "";
+  if (!tb.sources.length) { box.innerHTML = `<div class="sqlnote">No data sources in this chat.</div>`; return; }
+  for (const s of tb.sources) {
+    const h = document.createElement("div"); h.className = "tbsrc";
+    h.textContent = s.kind === "files" ? "Attached files" : `Database · ${s.name}`;
+    if (s.error) { const e = document.createElement("span"); e.className = "err"; e.textContent = s.error; h.appendChild(e); }
+    box.appendChild(h);
+    const list = s.tables.filter(t => !f || t.name.toLowerCase().includes(f) || (t.file || "").toLowerCase().includes(f));
+    if (!list.length && !s.error) { const n = document.createElement("div"); n.className = "sqlnote"; n.textContent = f ? "No match." : "No tables."; box.appendChild(n); }
+    for (const t of list) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "tbitem" + (tb.sel?.src === s.id && tb.sel?.name === t.name ? " sel" : "");
+      b.innerHTML = `<b></b><small></small>`;
+      b.querySelector("b").textContent = t.name;
+      b.querySelector("small").textContent = `${rowsText(t)} · ${t.columns.length} col${t.columns.length === 1 ? "" : "s"}`;
+      b.title = t.file ? `${t.file}${t.sheet ? " · sheet " + t.sheet : ""}${t.title ? " · " + t.title : ""}` : t.name;
+      b.onclick = () => selectTable(s.id, t.name);
+      box.appendChild(b);
+    }
+  }
+}
+function selectTable(src, name){
+  tb.sel = { src, name }; tb.offset = 0; tb.sort = null; tb.desc = false; tb.q = ""; tb.last = null;
+  renderTableList(); renderTableMain(); loadPreview();
+}
+function renderTableMain(){
+  const main = $("#tbMain");
+  if (!tb.sel) {
+    main.innerHTML = `<div class="tbempty"><b>No tables yet.</b><br>Tick a database with the database button, or attach CSV or Excel files, then open Tables again.</div>`;
+    return;
+  }
+  const s = tb.sources.find(x => x.id === tb.sel.src), t = findTable(tb.sel.src, tb.sel.name);
+  main.innerHTML = `<div class="tbtitle"><div><h3></h3><div class="sub"></div></div><div class="acts">
+      <button class="dlcsv" id="tbIns" type="button" title="Put the table name into your message">Insert name</button>
+      <button class="dlcsv" id="tbCsv" type="button" title="Download the rows matching the filter and sort, up to the download limit">Download CSV</button>
+      <button class="dlcsv" id="tbPy" type="button" title="Python script that loads this table and saves it as CSV, offline">Python</button></div></div>
+    <div class="tbcols"></div>
+    <div class="tbctl"><input id="tbQ" type="search" placeholder="Filter rows: any column contains…" aria-label="Filter rows">
+      <select id="tbLimit" aria-label="Rows per page"><option>50</option><option>100</option><option>200</option></select></div>
+    <div class="tbgrid" id="tbGrid"><div class="sqlnote" style="padding:10px">Loading…</div></div>
+    <div class="tbpager"><span id="tbInfo"></span><span class="sp"></span>
+      <button class="btn" id="tbPrev" type="button">‹ Prev</button><button class="btn" id="tbNext" type="button">Next ›</button></div>`;
+  main.querySelector("h3").textContent = t.name;
+  main.querySelector(".sub").textContent = s.kind === "files"
+    ? [t.file, t.sheet && `sheet ${t.sheet}`, t.title && `“${t.title}”`].filter(Boolean).join(" · ")
+    : `${s.name}${t.view ? " · view" : ""}`;
+  const cols = main.querySelector(".tbcols");
+  for (const [n, ty] of t.columns) { const sp = document.createElement("span"); sp.innerHTML = `<b></b> <i></i>`; sp.firstChild.textContent = n; sp.lastChild.textContent = String(ty).toLowerCase(); cols.appendChild(sp); }
+  $("#tbLimit").value = String(tb.limit);
+  $("#tbLimit").onchange = () => { tb.limit = +$("#tbLimit").value; tb.offset = 0; loadPreview(); };
+  $("#tbQ").oninput = () => { clearTimeout(tb.timer); tb.timer = setTimeout(() => { tb.q = $("#tbQ").value; tb.offset = 0; loadPreview(); }, 300); };
+  $("#tbPrev").onclick = () => { tb.offset = Math.max(0, tb.offset - tb.limit); loadPreview(); };
+  $("#tbNext").onclick = () => { tb.offset += tb.limit; loadPreview(); };
+  $("#tbIns").onclick = () => {
+    const inp = $("#input"), a = inp.selectionStart ?? inp.value.length, b = inp.selectionEnd ?? a;
+    inp.value = inp.value.slice(0, a) + t.name + inp.value.slice(b);
+    tbDlg.close(); inp.focus(); inp.selectionStart = inp.selectionEnd = a + t.name.length; inp.dispatchEvent(new Event("input"));
+  };
+  $("#tbCsv").onclick = () => tb.last && downloadResult({ sql: viewSql(), db_name: t.name }, $("#tbCsv"));
+  $("#tbPy").onclick = () => tb.last && downloadScript([{ sql: viewSql(), title: `${t.name}${tb.q ? " (filtered)" : ""}` }], t.name, $("#tbPy"));
+}
+function viewSql(){
+  const s = tb.sources.find(x => x.id === tb.sel.src);
+  return `-- db: ${s.kind === "files" ? "files" : s.name}\n${tb.last.sql}`;
+}
+async function loadPreview(){
+  if (!tb.sel) return;
+  const c = cur(), seq = ++tb.seq, grid = $("#tbGrid");
+  try {
+    const res = await fetch("/api/tables/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: tb.sel.src, table: tb.sel.name, dbs: chatDbs(c), files: browseFileIds(c),
+        offset: tb.offset, limit: tb.limit, sort: tb.sort, desc: tb.desc, q: tb.q }) });
+    const d = await res.json();
+    if (seq !== tb.seq || !grid.isConnected) return;   // a newer request (or another table) took over
+    if (d.error) { grid.innerHTML = ""; const e = document.createElement("div"); e.className = "sqlerr"; e.style.margin = "10px"; e.textContent = d.error; grid.appendChild(e); $("#tbInfo").textContent = ""; return; }
+    tb.last = d;
+    const t = document.createElement("table"), hr = t.createTHead().insertRow();
+    d.columns.forEach(col => {
+      const th = document.createElement("th"); th.textContent = col;
+      if (tb.sort === col) { const ar = document.createElement("span"); ar.className = "ar"; ar.textContent = tb.desc ? "▼" : "▲"; th.appendChild(ar); }
+      th.title = "Sort by this column (click again to reverse)";
+      th.onclick = () => { if (tb.sort === col) { if (tb.desc) { tb.sort = null; tb.desc = false; } else tb.desc = true; } else { tb.sort = col; tb.desc = false; } tb.offset = 0; loadPreview(); };
+      hr.appendChild(th);
+    });
+    const body = t.createTBody();
+    for (const row of d.rows) { const tr = body.insertRow(); for (const v of row) { const td = tr.insertCell();
+      if (v === null) { td.textContent = "NULL"; td.className = "null"; }
+      else { td.textContent = String(v); td.title = String(v); if (typeof v === "number") td.className = "num"; } } }
+    grid.innerHTML = ""; grid.appendChild(t); grid.scrollTop = 0;
+    if (!d.rows.length) { const n = document.createElement("div"); n.className = "sqlnote"; n.style.padding = "10px"; n.textContent = tb.q ? "No rows match the filter." : "No rows."; grid.appendChild(n); }
+    const from = d.rows.length ? d.offset + 1 : 0, to = d.offset + d.rows.length;
+    const total = d.total ?? d.estimate;
+    $("#tbInfo").textContent = `Rows ${from.toLocaleString()}–${to.toLocaleString()}` +
+      (total != null ? ` of ${d.total == null ? "~" : ""}${(+total).toLocaleString()}${tb.q ? " matching" : ""}` : "") + ` · ${d.ms} ms`;
+    $("#tbPrev").disabled = d.offset === 0;
+    $("#tbNext").disabled = d.rows.length < d.limit || (d.total != null && to >= d.total);
+  } catch (e) { if (seq === tb.seq) grid.innerHTML = `<div class="sqlerr" style="margin:10px">Couldn't load rows: ${esc(e.message)}</div>`; }
+}
+$("#tablesBtn").onclick = () => openTables();
+$("#tbRefresh").onclick = () => openTables(true);
+$("#tbClose").onclick = () => tbDlg.close();
+$("#tbFind").oninput = renderTableList;
+
+/* ---------- settings ---------- */
+const dlg = $("#settings");
+/* ---------- colour theme (per browser, localStorage "datasquint.theme") ---------- */
+const THEMES = {teal:{name:"Teal",light:"#2f6f8f",dark:"#5ba3c6"},blue:{name:"Blue",light:"#2f5fb3",dark:"#7aa2ea"},violet:{name:"Violet",light:"#6a4fb3",dark:"#a890ec"},green:{name:"Green",light:"#2f7d55",dark:"#62c08d"},amber:{name:"Amber",light:"#9c5a14",dark:"#e2a356"},rose:{name:"Rose",light:"#b03a5b",dark:"#ea7f9c"},graphite:{name:"Graphite",light:"#4a5563",dark:"#a9b3bf"}};
+function loadTheme(){
+  try { const t = JSON.parse(localStorage.getItem("datasquint.theme") || "{}");
+    return { mode: ["light","dark"].includes(t.mode) ? t.mode : "system", accent: THEMES[t.accent] ? t.accent : "teal" }; }
+  catch (e) { return { mode: "system", accent: "teal" }; }
+}
+function applyTheme(t){
+  const r = document.documentElement;
+  if (t.mode === "system") delete r.dataset.mode; else r.dataset.mode = t.mode;
+  if (t.accent === "teal") delete r.dataset.accent; else r.dataset.accent = t.accent;
+  document.querySelectorAll("#modeSeg button").forEach(b => b.setAttribute("aria-checked", b.dataset.mode === t.mode));
+  document.querySelectorAll("#accentPick .swatch").forEach(b => b.setAttribute("aria-checked", b.dataset.accent === t.accent));
+  $("#accentName").textContent = THEMES[t.accent].name;
+}
+function saveTheme(t){
+  // the colours go along so the Help page can match without its own copy of the palette
+  try { localStorage.setItem("datasquint.theme", JSON.stringify({ ...t, light: THEMES[t.accent].light, dark: THEMES[t.accent].dark })); } catch (e) {}
+}
+let theme = loadTheme(), themeDraft = null;
+applyTheme(theme);
+document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, mode: b.dataset.mode }; applyTheme(themeDraft); });
+document.querySelectorAll("#accentPick .swatch").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, accent: b.dataset.accent }; applyTheme(themeDraft); });
+$("#openSettings").onclick = () => { themeDraft = { ...theme }; applyTheme(themeDraft); $("#sysPrompt").value = state.settings.system; $("#temp").value = state.settings.temperature; $("#autoRun").checked = !!state.settings.autoRun; dlg.showModal(); };
+// Cancel, Esc or clicking away undoes a previewed theme; Save keeps it
+dlg.addEventListener("close", () => { if (themeDraft) { applyTheme(theme); themeDraft = null; } });
+$("#cancelSettings").onclick = () => dlg.close();
+$("#saveSettings").onclick = () => {
+  const t = parseFloat($("#temp").value);
+  state.settings.system = $("#sysPrompt").value;
+  state.settings.temperature = isNaN(t) ? 0.7 : Math.min(2, Math.max(0, t));
+  state.settings.autoRun = $("#autoRun").checked;
+  if (themeDraft) { theme = themeDraft; themeDraft = null; saveTheme(theme); }
+  save(); dlg.close();
+};
+
+/* ---------- init ---------- */
+(async function init(){
+  if (window.innerWidth < 760) $("#sidebar").classList.add("hidden");
+  const cfg = await fetch("/api/config").then(r => r.json()).catch(() => ({}));
+  if (cfg.max_upload_mb) maxMB = maxTableMB = cfg.max_upload_mb;
+  if (cfg.max_table_upload_mb) maxTableMB = cfg.max_table_upload_mb;
+  if (Array.isArray(cfg.table_extensions)) tableExts = cfg.table_extensions;
+  if (cfg.allowed_extensions) {
+    allowedExts = cfg.allowed_extensions; specialNames = cfg.special_names || [];
+    $("#fileInput").accept = allowedExts.join(",");
+    $("#attachBtn").title = "Attach files: images, PDF, Word, Excel, CSV, JSON, text, code and zip";
+  }
+  state.settings ||= { system: cfg.system_prompt || "", temperature: 0.7 };
+  const { models = [cfg.default_model] } = await fetch("/api/models").then(r => r.json()).catch(() => ({}));
+  const sel = $("#model");
+  models.filter(Boolean).forEach(m => sel.add(new Option(m, m)));
+  sel.value = models.includes(state.model) ? state.model : (cfg.default_model || models[0]);
+  if (!state.current && state.chats.length) state.current = state.chats[0].id;
+  await loadConnections();
+  render(); input.focus();
+  const used = [...new Set(state.chats.flatMap(c => chatDbs(c)))];
+  if (used.length) checkStatus(used);
+})();
+</script>
+</body>
+</html>

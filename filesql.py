@@ -22,6 +22,7 @@ Ordinary one-table files never go through the splitter, so they load exactly as 
 from array import array
 import csv
 import datetime
+import logging
 import mmap
 import os
 import re
@@ -33,7 +34,10 @@ try:
 except ImportError:  # optional dependency
     duckdb = None
 
-TABLE_EXTS = {".csv", ".tsv", ".xlsx"}
+log = logging.getLogger("datasquint.files")
+
+TABLE_EXTS = {".csv", ".tsv", ".xlsx", ".xlsm"}
+EXCEL_EXTS = {".xlsx", ".xlsm"}
 HEAD_BYTES = 64 * 1024      # how much of each file the text preview reads
 DB_FILE = "tables.duckdb"
 SOURCE = "files"            # what the model writes in "-- db: files"
@@ -114,11 +118,18 @@ def _utf8_copy(path, folder, idx):
     return out
 
 
+EXCEL_ERRORS = {"#N/A", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#NULL!", "#SPILL!", "#CALC!", "#GETTING_DATA"}
+
+
 def _xcell(v):
     """An Excel cell value as CSV text that DuckDB will type correctly."""
-    if v is None:
+    # Both Excel readers (python-calamine and openpyxl) give the same CSV text: error cells are empty
+    # (calamine already does that), and a date-time at exactly midnight is a date (calamine returns dates).
+    if v is None or (isinstance(v, str) and v in EXCEL_ERRORS):
         return ""
     if isinstance(v, datetime.datetime):
+        if not (v.hour or v.minute or v.second or v.microsecond):
+            return v.date().isoformat()
         return v.isoformat(sep=" ")
     if isinstance(v, (datetime.date, datetime.time)):
         return v.isoformat()
@@ -129,77 +140,135 @@ def _xcell(v):
     return v
 
 
-def _excel_rows(path):
-    """Yield (sheet_name, row iterator) per sheet: python-calamine if installed (~10x faster), else openpyxl."""
-    python_calamine = None
-    if EXCEL_READER != "openpyxl":
-        try:
-            import python_calamine
-        except ImportError:
-            pass
-    if python_calamine:
-        try:
-            wb = python_calamine.CalamineWorkbook.from_path(path)
-            names = wb.sheet_names
-        except BaseException as e:  # calamine's Rust panics arrive as pyo3 PanicException, a BaseException
-            if isinstance(e, (KeyboardInterrupt, SystemExit)):
-                raise
-            python_calamine = None   # fall back to openpyxl below
-        else:
-            for name in names:
-                try:
-                    sheet = wb.get_sheet_by_name(name)
-                    if not sheet.height:   # calamine panics on iter_rows() for a sheet with no cells
-                        continue
-                    rows = sheet.iter_rows()
-                except BaseException as e:  # any other reader panic: skip the sheet
-                    if isinstance(e, (KeyboardInterrupt, SystemExit)):
-                        raise
-                    continue
-                yield name, rows, sheet.start[1] if sheet.start else 0   # calamine skips empty leading columns
-            return
-    from openpyxl import load_workbook
-    wb = load_workbook(path, read_only=True, data_only=True)
+def _fatal(e):
+    return isinstance(e, (KeyboardInterrupt, SystemExit))
+
+
+def _calamine_book(path):
+    """A python-calamine workbook, or None (not installed, turned off, or it can't open the file)."""
+    if EXCEL_READER == "openpyxl":
+        return None
     try:
-        for ws in wb.worksheets:
-            yield ws.title, ws.iter_rows(values_only=True), 0
-    finally:
-        wb.close()
+        import python_calamine
+        return python_calamine.CalamineWorkbook.from_path(path)
+    except BaseException as e:   # ImportError, or a Rust panic (pyo3 PanicException is a BaseException)
+        if _fatal(e):
+            raise
+        return None
 
 
-def _xlsx_sheets(path, folder):
+class _Openpyxl:
+    """openpyxl, opened on first use (it's slower, so only when calamine can't do a sheet)."""
+    def __init__(self, path):
+        self.path, self.wb, self.error = path, None, None
+
+    def book(self):
+        if self.wb is None and self.error is None:
+            try:
+                from openpyxl import load_workbook
+                self.wb = load_workbook(self.path, read_only=True, data_only=True)
+            except Exception as e:
+                self.error = e
+        if self.error is not None:
+            raise self.error
+        return self.wb
+
+    def close(self):
+        if self.wb is not None:
+            self.wb.close()
+
+
+def _write_sheet(rows, dest):
+    """Write a sheet's rows to CSV, keeping blank rows as empty lines (DuckDB skips them; the splitter needs
+    the gaps). Returns (data rows written, rowmap, width)."""
+    n = width = 0
+    rowmap = array("I")
+    with open(dest, "w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh)
+        blank = 0
+        for r, row in enumerate(rows, start=1):
+            if not any(v is not None and str(v).strip() != "" for v in row):
+                blank += 1
+                continue
+            if n and blank:
+                gap = min(blank, 2)
+                fh.write("\n" * gap)
+                rowmap.extend([r - 1] * gap)
+            blank = 0
+            w.writerow([_xcell(v) for v in row])
+            width = max(width, len(row))
+            rowmap.append(r)
+            n += 1
+    return n, rowmap, width
+
+
+def _xlsx_sheets(path, folder, warnings=None):
     """Write each non-empty sheet to a CSV.
+
+    Each sheet is read with python-calamine (fast) and, if that fails for that sheet, again with openpyxl,
+    so one awkward sheet never costs the others. Sheets neither can read are reported in `warnings`.
 
     Returns [(sheet_name, csv_path, coords)], coords = (rowmap, col_offset, width): rowmap[k] is the Excel row
     number (1-based) of CSV record k, and column j of the CSV is Excel column j + col_offset + 1. They let
     a generated script find each table in the workbook itself.
     """
+    warnings = warnings if warnings is not None else []
+    cal, opx = _calamine_book(path), _Openpyxl(path)
+    try:
+        names = cal.sheet_names if cal else opx.book().sheetnames
+    except Exception as e:
+        raise ValueError(_excel_error(e)) from None
     out = []
-    for i, (title, rows, col_offset) in enumerate(_excel_rows(path)):
-        dest = os.path.join(folder, f"sheet_{i}.csv")
-        n = width = 0
-        rowmap = array("I")
-        with open(dest, "w", encoding="utf-8", newline="") as fh:
-            w = csv.writer(fh)
-            blank = 0
-            for r, row in enumerate(rows, start=1):
-                if not any(v is not None and str(v).strip() != "" for v in row):
-                    blank += 1   # kept as an empty line (DuckDB skips those) so the splitter sees the gap
-                    continue
-                if n and blank:
-                    gap = min(blank, 2)
-                    fh.write("\n" * gap)
-                    rowmap.extend([r - 1] * gap)
-                blank = 0
-                w.writerow([_xcell(v) for v in row])
-                width = max(width, len(row))
-                rowmap.append(r)
-                n += 1
-        if n:
-            out.append((title, dest, (rowmap, col_offset, width)))
-        else:
-            os.remove(dest)
+    try:
+        for i, name in enumerate(names):
+            dest = os.path.join(folder, f"sheet_{i}.csv")
+            done, last = False, None
+            if cal:
+                try:
+                    sheet = cal.get_sheet_by_name(name)
+                    if not sheet.height:   # no cells (calamine panics on iter_rows() for these)
+                        continue
+                    n, rowmap, width = _write_sheet(sheet.iter_rows(), dest)
+                    off = sheet.start[1] if sheet.start else 0   # calamine skips empty leading columns
+                    done = True
+                except BaseException as e:
+                    if _fatal(e):
+                        raise
+                    last = e
+                    log.info("python-calamine couldn't read sheet %r of %s (%s); trying openpyxl", name,
+                             os.path.basename(path), _short(e))
+            if not done:
+                try:
+                    n, rowmap, width = _write_sheet(opx.book()[name].iter_rows(values_only=True), dest)
+                    off, done = 0, True
+                except Exception as e:
+                    last = e
+            if not done:
+                warnings.append(f"Sheet '{name}' couldn't be read and was skipped ({_short(last)}).")
+                if os.path.exists(dest):
+                    os.remove(dest)
+                continue
+            if n:
+                out.append((name, dest, (rowmap, off, width)))
+            else:
+                os.remove(dest)
+    finally:
+        opx.close()
     return out
+
+
+def _short(e):
+    text = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+    return text[:200]
+
+
+def _excel_error(e):
+    """A plain explanation for a workbook that can't be opened at all."""
+    text = str(e)
+    if "zip" in text.lower() or "BadZipFile" in type(e).__name__:
+        return ("This isn't a readable .xlsx file. It may be password-protected (remove the password in Excel), "
+                "or an older .xls file renamed to .xlsx (save it as .xlsx or CSV in Excel).")
+    return f"Couldn't read this Excel file: {_short(e)}"
 
 
 # ---------------------------------------------------------------- several tables in one sheet
@@ -208,15 +277,19 @@ _AUTO_COL = re.compile(r"^column\d+$")
 _NUMISH = re.compile(r"^[-+(]?[$€£¥]?\s*[\d.,]+\s*[%)]?$|^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}([ T]\d{1,2}:\d{2}(:\d{2})?)?$|^\d{1,2}:\d{2}(:\d{2})?$")
 
 
-def _maybe_several(src, cols):
-    """Cheap check: could this source hold more than one table (or a title row)?"""
-    if any(_AUTO_COL.match(c) for c, _ in cols):   # an empty header cell: a gap column or a title row
-        return True
+def _has_gaps(src):
+    """A blank line with data after it?"""
     try:
         with open(src, "rb") as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-            return _BLANK_THEN_DATA.search(mm) is not None   # a blank line with data after it
+            return _BLANK_THEN_DATA.search(mm) is not None
     except (ValueError, OSError):   # empty file
         return False
+
+
+def _maybe_several(src, cols):
+    """Cheap check: could this source hold more than one table (or a title row)?"""
+    # an empty header cell (a gap column or a title row), or a blank line with data after it
+    return any(_AUTO_COL.match(c) for c, _ in cols) or _has_gaps(src)
 
 
 def _header_like(cells):
@@ -258,6 +331,7 @@ def _split(src, delim, folder, idx):
         except UnicodeDecodeError:
             return _split_inner(_utf8_copy(src, folder, idx), delim, folder, idx)
     except Exception:   # never let the splitter break an upload: fall back to the normal load
+        log.warning("Couldn't look for several tables in %s; loading it as one table", os.path.basename(src), exc_info=True)
         return None
 
 
@@ -313,7 +387,10 @@ def _split_inner(src, delim, folder, idx):
         n_first = sum(1 for c in first[0][1] if c) if first else 0
         # a block that's only a one-cell line: a title (or note) for the next table
         prev = open_at.get(lo)
-        if (first and len(first) == 1 and n_first == 1 and bk["seg"]["end"] == first[0][0]
+        seg_rows = bk["seg"]["end"] - bk["seg"]["start"] + 1
+        # a short block of one-cell lines (a title, "Generated on …" notes): a title for the next table,
+        # unless it looks like more rows of a one-column table above
+        if (first and seg_rows <= 3 and len(first) == seg_rows and all(sum(1 for c in r if c) == 1 for _, r in first)
                 and not (prev is not None and prev["data"] is not None and hi <= prev["hi"]
                          and _shape(first[0][1]) == _shape(prev["data"][:len(first[0][1])]))):
             pending_title, changed = first[0][1][[bool(c) for c in first[0][1]].index(True)], True
@@ -424,77 +501,149 @@ def _label(part, k):
     return f"table_{k + 1}"
 
 
-def prepare(path, name, folder):
+BASE_OPTS = "normalize_names=true, sample_size=-1, null_padding=true"
+OUR_CSV = "delim=',', quote='\"', escape='\"'"   # CSVs Datasquint wrote itself (sheets, split tables)
+TEXT_NOTE = ("Some columns had mixed or unreadable values, so all columns were loaded as text; "
+             "cast them in SQL (e.g. qty::INTEGER, day::DATE).")
+SKIP_NOTE = "Some malformed lines couldn't be read and were left out."
+
+
+def _attempts(dialect, extra=""):
+    """read_csv settings to try in turn, each more forgiving: (options, note for the model or None)."""
+    first = ", ".join(x for x in (dialect, extra) if x)
+    loose = ", ".join(x for x in (dialect or "quote='\"'", extra, "strict_mode=false", "max_line_size=200000000") if x)
+    return [(first, None), (loose, None),
+            (loose + ", all_varchar=true", TEXT_NOTE),
+            (loose + ", all_varchar=true, ignore_errors=true", TEXT_NOTE + " " + SKIP_NOTE)]
+
+
+def _create(con, table, path, attempts):
+    """CREATE TABLE from a CSV with the first settings that work. Returns (options used, note)."""
+    last = None
+    for k, (opts, note) in enumerate(attempts):
+        try:
+            con.execute(f"DROP TABLE IF EXISTS {table}")
+            con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_csv(?, {', '.join(x for x in (BASE_OPTS, opts) if x)})", [path])
+            if k:
+                log.info("%s loaded with fallback settings (%s) after: %s", os.path.basename(path), opts, _short(last))
+            return opts, note
+        except duckdb.Error as e:   # e.g. an option this DuckDB version doesn't know: just try the next
+            last = e
+    con.execute(f"DROP TABLE IF EXISTS {table}")
+    raise ValueError(f"DuckDB couldn't read it as a table: {_short(last)}")
+
+
+def prepare(path, name, folder, warnings=None):
     """Load a tabular upload into folder/tables.duckdb.
 
-    Returns [{"table", "sheet", "columns": [[name, type]], "rows"}], or [] if nothing loadable.
+    Returns [{"table", "sheet", "columns": [[name, type]], "rows", "load", ...}]. Raises ValueError with a
+    plain reason when nothing in the file can be loaded. Problems that didn't stop it (a sheet skipped,
+    columns loaded as text) are appended to `warnings`.
     """
+    warnings = warnings if warnings is not None else []
     ext = os.path.splitext(name)[1].lower()
-    if ext == ".xlsx":
+    if ext in EXCEL_EXTS:
         try:
-            sources = [(sheet, p, None, coords) for sheet, p, coords in _xlsx_sheets(path, folder)]
+            sources = [(sheet, p, None, coords) for sheet, p, coords in _xlsx_sheets(path, folder, warnings)]
+        except ValueError:
+            raise
         except BaseException as e:  # don't let a reader panic take down the request
-            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            if _fatal(e):
                 raise
-            raise ValueError(f"Couldn't read this Excel file: {e}") from None
+            raise ValueError(_excel_error(e)) from None
+        if not sources:
+            raise ValueError("No sheet in this workbook has any data." if not warnings else " ".join(warnings))
+        encoding = None
     else:
-        sources = [("", path, "\t" if ext == ".tsv" else None, None)]
+        encoding = _encoding(path)
+        if not encoding.startswith("utf-8"):   # e.g. Windows-1252 from Excel: load a UTF-8 copy
+            src = _utf8_copy(path, folder, 0)
+        else:
+            src = path
+        sources = [("", src, "\t" if ext == ".tsv" else None, None)]
     dbpath = os.path.join(folder, DB_FILE)
     con = duckdb.connect(dbpath)
     out = []
     try:
-        encoding = None if ext == ".xlsx" else _encoding(path)
         for i, (sheet, src, delim, coords) in enumerate(sources):
             table = f"t{i}"
-            opts = "normalize_names=true, sample_size=-1, null_padding=true" + (", delim='\\t'" if delim else "")
-            sql = f"CREATE TABLE {table} AS SELECT * FROM read_csv(?, {opts})"
-            loaded = True
+            where = f"sheet '{sheet}'" if sheet else "the file"
+            dialect = OUR_CSV if sheet else ("delim='\\t'" if delim else "")
             try:
-                try:
-                    con.execute(sql, [src])
-                except duckdb.Error:
-                    con.execute(f"DROP TABLE IF EXISTS {table}")
-                    con.execute(sql, [_utf8_copy(src, folder, i)])  # retry as UTF-8
-            except duckdb.Error:
-                con.execute(f"DROP TABLE IF EXISTS {table}")
-                loaded = False   # e.g. a title row confusing the format detection: the splitter may manage
+                opts, note = _create(con, table, src, _attempts(dialect))
+                loaded = True
+            except ValueError as e:
+                loaded, opts, note, err = False, "", None, e   # the splitter may still manage (e.g. a title row)
             cols = [[c[0], c[1]] for c in con.execute(f"DESCRIBE {table}").fetchall()] if loaded else []
             parts = (_split(src, delim, folder, i)
                      if SPLIT_TABLES and (not loaded or _maybe_several(src, cols)) else None)
-            if not loaded and not parts:
-                if sheet:   # Excel: load it as before, without the blank rows kept for the splitter
-                    con.execute(sql, [_no_blank_lines(src, folder, i)])
+            if loaded and not parts and sheet and _has_gaps(src):
+                # one table after all: load it without the blank rows kept for the splitter (in a one-column
+                # sheet DuckDB would read them as empty rows)
+                try:
+                    opts, note = _create(con, table, _no_blank_lines(src, folder, i), _attempts(dialect))
                     cols = [[c[0], c[1]] for c in con.execute(f"DESCRIBE {table}").fetchall()]
+                except ValueError:
+                    opts, note = _create(con, table, src, _attempts(dialect))
+            if not loaded and not parts:
+                if sheet:   # Excel: one more try without the blank rows kept for the splitter
+                    try:
+                        opts, note = _create(con, table, _no_blank_lines(src, folder, i), _attempts(dialect))
+                        cols = [[c[0], c[1]] for c in con.execute(f"DESCRIBE {table}").fetchall()]
+                    except ValueError as e:
+                        warnings.append(f"Sheet '{sheet}' couldn't be loaded as a table ({e}).")
+                        continue
                 else:
-                    con.execute(sql, [_utf8_copy(src, folder, i)])   # raises the original kind of error
+                    raise err
             if parts:
                 con.execute(f"DROP TABLE IF EXISTS {table}")
                 labels = set()
                 for k, part in enumerate(parts):
                     sub = f"{table}_{k}"
-                    hdr = "true" if part["header"] else "auto"
-                    con.execute(f"CREATE TABLE {sub} AS SELECT * FROM read_csv(?, normalize_names=true, "
-                                f"sample_size=-1, null_padding=true, delim=',', header={hdr})", [part["path"]])
+                    hdr = "header=true" if part["header"] else ""
+                    try:
+                        popts, pnote = _create(con, sub, part["path"], _attempts(OUR_CSV, hdr))
+                    except ValueError as e:
+                        warnings.append(f"A table in {where} couldn't be loaded ({e}).")
+                        continue
                     label, n = _label(part, k), 2
                     while label in labels:
                         label, n = f"{_label(part, k)}_{n}", n + 1
                     labels.add(label)
+                    spec = _load_spec(sheet, coords, encoding, part, delim)
+                    spec["opts"] = popts
                     out.append({"table": sub, "sheet": sheet, "block": label, "title": part["title"] or "",
-                                "load": _load_spec(sheet, coords, encoding, part, delim),
+                                "load": spec, **({"note": pnote} if pnote else {}),
                                 "columns": [[c[0], c[1]] for c in con.execute(f"DESCRIBE {sub}").fetchall()],
                                 "rows": int(con.execute(f"SELECT count(*) FROM {sub}").fetchone()[0]),
                                 "src": os.path.basename(part["path"])})
+                    if pnote:
+                        warnings.append(f"{label}: {pnote}")
                 continue
             rows = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
             if cols:
-                out.append({"table": table, "sheet": sheet, "columns": cols, "rows": int(rows),
-                            "load": _load_spec(sheet, coords, encoding, None, delim),
-                            "src": os.path.basename(src)})
+                spec = _load_spec(sheet, coords, encoding, None, delim)
+                spec["opts"] = opts
+                out.append({"table": table, "sheet": sheet, "columns": cols, "rows": int(rows), "load": spec,
+                            **({"note": note} if note else {}), "src": os.path.basename(src)})
+                if note:
+                    warnings.append(f"{where[0].upper() + where[1:]}: {note}")
     finally:
         con.close()
-    if not out and os.path.exists(dbpath):
-        os.remove(dbpath)
+    if not out:
+        if os.path.exists(dbpath):
+            os.remove(dbpath)
+        raise ValueError(" ".join(warnings) or "No data found to load as a table.")
     return out
+
+
+def off_reason():
+    """Why CSV/Excel files aren't loaded as tables on this server, or None if they are."""
+    if not installed():
+        return "DuckDB isn't installed on the server (pip install duckdb), so CSV and Excel files are read as text."
+    if not ENABLED:
+        return "Loading CSV and Excel files as tables is turned off on this server (FILE_TABLES=0)."
+    return None
 
 
 # ---------------------------------------------------------------- chat level
@@ -602,7 +751,7 @@ def prompt_section(tables, max_chars=20000):
         src = t["file"] + (f", sheet '{t['sheet']}'" if t.get("sheet") else "")
         if t.get("block"):
             src += ", one of several tables in it" + (f", titled '{t['title']}'" if t.get("title") else "")
-        block = [f"{t['name']}  (from {src}; {t['rows']:,} rows)"]
+        block = [f"{t['name']}  (from {src}; {t['rows']:,} rows)"] + ([f"  note: {t['note']}"] if t.get("note") else [])
         block += [f"  {c} {typ}" for c, typ in t["columns"]]
         rows = samples.get(t["name"])
         if rows:

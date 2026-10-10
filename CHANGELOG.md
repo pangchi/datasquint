@@ -8,6 +8,34 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.4.0 — 2026-10-11
+
+### Added
+- **Error log**: `logs/datasquint.log`, rotating at `LOG_MAX_MB` (10 MB) with `LOG_BACKUPS` (5) old files; the path is printed at startup. Each line has the time, level, part of the app and the client and request.
+  - ERROR: unexpected errors with full tracebacks (unhandled errors now return a short JSON/text message instead of a server error page), and AI provider failures.
+  - WARNING: files not loaded as tables or loaded with notes, failed queries/downloads/previews with their SQL, databases becoming unreachable (logged once per change), failed uploads and deletes, and **browser errors**: JavaScript errors plus every red error message shown to a user.
+  - INFO: startup, and one line per upload, query and AI reply, plus file-loader fallbacks.
+  - Passwords, API keys, bearer tokens and private keys are masked before writing.
+- `LOG_FILE`, `LOG_LEVEL`, `LOG_MAX_MB`, `LOG_BACKUPS` settings; `POST /api/log`; `GET /api/logs` (from the server itself only); `logsetup.py`.
+
+## 2.3.0 — 2026-10-11
+
+### Fixed
+- **CSV and Excel files could silently end up as truncated text instead of tables.** Any error while loading (a reader crash on one sheet, DuckDB misreading the format, a very long line) made the whole file fall back to text with no explanation. Now:
+  - each Excel sheet is retried with `openpyxl` if `python-calamine` fails on it, and one unreadable sheet no longer stops the others;
+  - DuckDB retries with more forgiving settings (lenient parsing, long lines up to 200 MB, every column as text, then skipping malformed lines) before giving up, and the CSVs Datasquint writes from sheets are read with their exact format instead of being guessed;
+  - when a file still isn't a table, its chip shows **⚠ read as text, not a table** with the reason (password-protected workbook, `.xls` renamed to `.xlsx`, `FILE_TABLES=0`, DuckDB not installed…) and a notice appears; partial problems show as **⚠ N notes**.
+- A sheet starting with a few one-cell lines ("Company XYZ", "Generated on…") no longer produces a junk one-row table; the lines name the table below.
+- Blank rows in a one-column sheet are no longer loaded as empty rows.
+- The startup port check reported "already in use" for up to a minute after restarting Datasquint (connections still closing). It now behaves like the web server and only refuses a port something is really using.
+
+### Changed
+- Excel error cells (`#N/A`, `#DIV/0!`…) load as empty values, and date-times at exactly midnight as dates, whichever Excel reader is used. Python scripts do the same, so their tables match Datasquint's (checked on 33 tables with both readers).
+- Python scripts reuse the exact DuckDB settings each table was loaded with.
+
+### Added
+- `.xlsm` (macro-enabled) workbooks are accepted and loaded like `.xlsx`; macros are ignored.
+
 ## 2.2.0 — 2026-10-11
 
 ### Added

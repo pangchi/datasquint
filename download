@@ -1,0 +1,10 @@
+# secrets and local state - never commit these
+.env
+secret.key
+connections.sqlite
+ssh_known_hosts
+uploads/
+__pycache__/
+*.pyc
+logs/
+*.log

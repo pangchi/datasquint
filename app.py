@@ -40,10 +40,16 @@ import posixpath
 
 import openai
 
+import logsetup
+LOG_PATH = logsetup.setup()   # before the other modules log anything
 import db
 import filesql
 import scriptgen
 from version import __version__ as VERSION
+log = logsetup.child("web")
+ulog = logsetup.child("upload")
+qlog = logsetup.child("query")
+clog = logsetup.child("chat")
 from flask import Flask, Response, abort, jsonify, render_template, request, send_from_directory, stream_with_context
 from werkzeug.utils import secure_filename
 
@@ -76,7 +82,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Allowed types, per the model's stated support: images, documents, data files and code.
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
-DOC_EXTS = {".pdf", ".docx", ".xlsx"}                      # converted to text on the server
+DOC_EXTS = {".pdf", ".docx", ".xlsx", ".xlsm"}                      # converted to text on the server
 ARCHIVE_EXTS = {".zip"}                                    # extracted; members processed like uploads
 TEXT_EXTS = {
     # documents / data
@@ -118,7 +124,7 @@ def extract_text(path, name, mime):
         for t in d.tables:
             out += [" | ".join(c.text.strip() for c in row.cells) for row in t.rows]
         return "\n".join(out)
-    if ext == ".xlsx":
+    if ext in (".xlsx", ".xlsm"):
         try:
             from openpyxl import load_workbook
         except ImportError:
@@ -265,6 +271,18 @@ def process_zip(zpath, folder):
     return text, images, stats, truncated
 
 
+@app.errorhandler(Exception)
+def unhandled(e):
+    """Anything a route didn't catch: log it with the traceback, answer with JSON (no debugger pages)."""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e
+    log.exception("Unhandled error: %s", e)
+    if request.path.startswith("/api/"):
+        return jsonify(error=f"Internal error: {type(e).__name__}: {e}. Details are in the server log."), 500
+    return Response("Internal error. Details are in the server log.", status=500, mimetype="text/plain")
+
+
 @app.errorhandler(413)
 def too_large(_):
     return jsonify(error=f"File is larger than the upload limit ({limit_text()})."), 413
@@ -292,7 +310,7 @@ def upload():
         os.makedirs(folder)
         return _process_upload(f, ext, fid, folder)
     except Exception as e:  # e.g. the folder was removed by hand mid-way: answer cleanly, don't leave half a folder
-        app.logger.exception("upload %s failed", fid)
+        ulog.exception("Upload of %s failed: %s", f.filename, e)
         remove_tree(folder)
         return jsonify(error=f"The upload couldn't be processed: {e}"), 500
     finally:
@@ -318,6 +336,7 @@ def _process_upload(f, ext, fid, folder):
         try:
             text, images, stats, truncated = process_zip(path, folder)
         except Exception as e:
+            ulog.warning("Zip %s rejected: %s", f.filename, e)
             remove_tree(folder)
             return jsonify(error=str(e)), 400
         if not stats["files"]:
@@ -341,12 +360,21 @@ def _process_upload(f, ext, fid, folder):
                 remove_tree(folder)
                 return jsonify(error="This BMP image couldn't be read."), 400
     else:
-        tables = []
+        tables, warnings, table_error = [], [], None
         if tabular:
             try:
-                tables = filesql.prepare(path, name, folder)
-            except Exception:
-                tables = []  # not loadable as a table: fall back to text below
+                tables = filesql.prepare(path, name, folder, warnings)
+            except Exception as e:   # not loadable as a table: say why, and fall back to text below
+                ulog.warning("%s (%s bytes) not loaded as a table: %s", f.filename, meta["size"], e,
+                             exc_info=not isinstance(e, ValueError))
+                table_error, tables = str(e).strip() or type(e).__name__, []
+        elif filesql.is_tabular(name):
+            table_error = filesql.off_reason()
+        if table_error:
+            meta["table_error"] = table_error
+        if warnings:
+            meta["warnings"] = warnings[:20]
+            ulog.warning("%s loaded with notes: %s", f.filename, " | ".join(warnings[:20]))
         if tables:
             # The model gets a preview plus SQL access, so only the first lines are kept as text.
             text = filesql.head_text(folder, tables)
@@ -355,13 +383,14 @@ def _process_upload(f, ext, fid, folder):
         else:
             if meta["size"] > MAX_UPLOAD_MB * 1024 * 1024:
                 remove_tree(folder)
-                return jsonify(error=f"This file couldn't be read as a table, and other files are limited to "
-                                     f"{MAX_UPLOAD_MB} MB. Check it's a valid CSV/TSV/Excel file."), 400
+                return jsonify(error=f"This file couldn't be loaded as a table ({table_error or 'unknown reason'}), "
+                                     f"and files read as text are limited to {MAX_UPLOAD_MB} MB."), 400
             try:
                 text = extract_text(path, name, mime)
             except Exception as e:
+                ulog.warning("%s couldn't be read: %s%s", f.filename, e, f" (table loader: {table_error})" if table_error else "")
                 remove_tree(folder)
-                return jsonify(error=str(e)), 400
+                return jsonify(error=table_error or str(e)), 400   # the table loader's reason is the clearer one
         if not text.strip():
             remove_tree(folder)
             return jsonify(error="No readable text found in this file (scanned PDFs need OCR)."), 400
@@ -373,7 +402,10 @@ def _process_upload(f, ext, fid, folder):
 
     with open(os.path.join(folder, "meta.json"), "w") as fh:
         json.dump(meta, fh)
-    out = {k: meta[k] for k in ("id", "name", "mime", "size", "kind", "truncated", "stats") if k in meta}
+    out = {k: meta[k] for k in ("id", "name", "mime", "size", "kind", "truncated", "stats", "table_error", "warnings") if k in meta}
+    ulog.info("Uploaded %s: %s bytes, %s", meta["name"], f"{meta['size']:,}",
+              f"{len(meta['tables'])} table(s), {sum(t['rows'] for t in meta['tables']):,} rows" if meta.get("tables")
+              else meta["kind"] + (" (truncated)" if meta.get("truncated") else ""))
     if meta.get("tables"):
         out["tables"] = [{"rows": t["rows"], "columns": len(t["columns"]), "sheet": t["sheet"]} for t in meta["tables"]]
     return jsonify(out)
@@ -487,6 +519,7 @@ def delete_uploads(ids):
             freed += size
         else:
             failed.append({"id": fid, "error": _delete_error_text(folder, err)})
+            ulog.warning("Couldn't delete upload %s: %s", fid, failed[-1]["error"])
             freed += size - _folder_bytes(folder)
     return {"deleted": deleted, "failed": failed, "freed": freed}
 
@@ -750,6 +783,7 @@ def models():
             ids.insert(0, DEFAULT_MODEL)
         return jsonify(models=ids)
     except Exception as e:  # many compatible servers don't implement /models
+        log.warning("Model list unavailable from %s: %s", BASE_URL, e)
         return jsonify(models=[DEFAULT_MODEL], warning=str(e))
 
 
@@ -835,6 +869,7 @@ def split_send(model, raw, system, temperature, ftables=None):
 
 # ---------------------------------------------------------------- PostgreSQL
 def _err(e, code=400):
+    (log.error if code >= 500 else log.warning)("%s", str(e).strip().strip("'"), exc_info=code >= 500)
     return jsonify(error=str(e).strip().strip("'")), code
 
 
@@ -918,9 +953,11 @@ def db_query():
             res = filesql.run_query(sql, tables, db.DB_MAX_ROWS, db.DB_TIMEOUT_MS)
         else:
             res = db.run_query(sql, cids, target)
+        qlog.info("Query on %s: %s rows in %s ms", res["db_name"], res["row_count"], res["ms"])
         return jsonify(sql=sql, text=db.result_text(sql, res, db_name=res["db_name"]), **res)
     except Exception as e:
         err = str(e).strip()
+        qlog.warning("Query failed: %s | SQL: %s", err, _sql_for_log(sql))
         return jsonify(sql=sql, error=err, text=db.result_text(sql, error=err))
 
 
@@ -937,6 +974,7 @@ def db_export():
         else:
             res = db.run_query(sql, cids, target, max_rows=db.DB_EXPORT_MAX_ROWS, full=True)
     except Exception as e:
+        qlog.warning("CSV download failed: %s | SQL: %s", str(e).strip(), _sql_for_log(sql))
         return jsonify(error=str(e).strip()), 400
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -970,6 +1008,7 @@ def tables_list():
             src["tables"] = db.table_list(cid, refresh=bool(data.get("refresh")))
         except Exception as e:
             src["error"] = str(e).strip()
+            qlog.warning("Table list for %s failed: %s", c["name"], src["error"])
         sources.append(src)
     return jsonify(sources=sources)
 
@@ -1021,6 +1060,7 @@ def tables_preview():
                        estimate=None if where or data.get("source") == db.FILES_SOURCE else known,
                        ms=res["ms"], sql=f"SELECT * FROM {qtable}{where}{order}")
     except Exception as e:
+        qlog.warning("Table preview of %s (%s) failed: %s", data.get("table"), data.get("source"), str(e).strip())
         return jsonify(error=str(e).strip()), 400
 
 
@@ -1052,6 +1092,7 @@ def make_script():
                                         "ssh": {k: pub["ssh"].get(k) for k in ("host", "port", "user")} if pub.get("ssh") else None}
             queries.append({"title": title, "sql": sql, "source": target["name"]})
     if not queries:
+        qlog.warning("Python script requested, but none of %d queries could be resolved", len(data.get("queries") or []))
         return jsonify(error="There are no queries to put in a script: run a query first."), 400
     file_sql = " ".join(q["sql"] for q in queries if q["source"] == db.FILES_SOURCE).lower()
     used_tables = []
@@ -1067,6 +1108,42 @@ def make_script():
     name = (re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")[:50] or "datasquint_queries") + ".py"
     return Response(text, mimetype="text/x-python",
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "X-Queries": str(len(queries))})
+
+
+def _sql_for_log(sql, limit=500):
+    sql = " ".join(str(sql or "").split())
+    return sql if len(sql) <= limit else sql[:limit] + "…"
+
+
+_browser_errors = {}
+
+
+@app.post("/api/log")
+def browser_log():
+    """Errors from the page (JavaScript errors, and error messages shown to the user), into the server log."""
+    data = request.get_json(force=True, silent=True) or {}
+    key = request.remote_addr or "?"
+    now = time.time()
+    recent = [t for t in _browser_errors.get(key, []) if now - t < 60]
+    if len(recent) >= 30:   # at most 30 a minute per client, so a broken page can't flood the log
+        return jsonify(ok=False), 429
+    _browser_errors[key] = recent + [now]
+    kind = str(data.get("kind") or "error")[:20]
+    msg = str(data.get("message") or "")[:1000]
+    where = " ".join(str(data.get(k) or "")[:200] for k in ("source", "line") if data.get(k))
+    stack = str(data.get("stack") or "")[:3000]
+    logsetup.child("browser").warning("%s: %s%s%s", kind, msg, f" ({where})" if where else "",
+                                      ("\n" + stack) if stack else "")
+    return jsonify(ok=True)
+
+
+@app.get("/api/logs")
+def recent_logs():
+    """The end of the log file, only for requests from the server itself (logs can contain SQL and file names)."""
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return jsonify(error="The log can only be read on the server itself."), 403
+    n = max(1, min(2000, int(request.args.get("lines", 200))))
+    return Response("\n".join(logsetup.tail(n)) + "\n", mimetype="text/plain")
 
 
 @app.post("/api/chat")
@@ -1090,6 +1167,7 @@ def chat():
         try:
             system = (system + "\n\n" + db.system_prompt(dbs, filesql.prompt_section(tables) if tables else None)).strip()
         except Exception as e:
+            clog.warning("Data sources unavailable for a chat: %s", e)
             system = (system + f"\n\n(Databases are enabled for this chat but unavailable: {e}. "
                       "Tell the user if they ask for data.)").strip()
 
@@ -1098,13 +1176,22 @@ def chat():
         messages = [{"role": "system", "content": system}] + messages
 
     def generate():
+        t0, size = time.time(), char_len(messages)
         try:
-            if char_len(messages) <= MAX_SEND_CHARS:
+            if size <= MAX_SEND_CHARS:
                 yield from stream_completion(model, messages, temperature)
             else:
                 yield from split_send(model, raw, system, temperature, ftables)
             yield ndjson({"done": True})
+            clog.info("Reply from %s: %s chars sent, %.1f s", model, f"{size:,}", time.time() - t0)
+        except GeneratorExit:   # the user pressed Stop or closed the page
+            clog.info("Reply from %s stopped by the user after %.1f s", model, time.time() - t0)
+            raise
         except Exception as e:
+            # provider errors (bad key, unknown model, rate limit, context too long) are expected: no traceback
+            known = isinstance(e, openai.APIError)
+            clog.error("Reply from %s failed after %.1f s (%s chars sent): %s: %s", model, time.time() - t0,
+                       f"{size:,}", type(e).__name__, e, exc_info=not known)
             yield ndjson({"error": f"{type(e).__name__}: {e}"})
 
     return Response(
@@ -1126,6 +1213,8 @@ if __name__ == "__main__":
     # Fail early with a clear message if something else already uses the port
     import socket
     with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as probe:
+        if os.name != "nt":   # like the web server itself: ignore connections still closing from a restart
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((host, port))
         except OSError as e:
@@ -1136,7 +1225,9 @@ if __name__ == "__main__":
           + (f", up to {MAX_TABLE_UPLOAD_MB} MB per file" if filesql.available() else f"; those files are read as text, up to {MAX_UPLOAD_MB} MB"))
     shown = "localhost" if host in ("127.0.0.1", "localhost") else ("<this computer's address>" if host in ("0.0.0.0", "::") else host)
     print(f" * Open http://{shown}:{port} in your browser")
+    print(f" * Error log: {LOG_PATH or 'console only (the log file could not be opened)'}")
+    log.info("Datasquint %s starting on %s:%s (SQL over files: %s)", VERSION, host, port, filesql.status())
     app.run(host=host, port=port, debug=debug, threaded=True,
             # watchdog matches patterns per path segment, so list each depth under uploads/
-            exclude_patterns=[os.path.join(UPLOAD_DIR, *["*"] * n) for n in (1, 2, 3)] + ["*.sqlite", "*.duckdb"]
+            exclude_patterns=[os.path.join(UPLOAD_DIR, *["*"] * n) for n in (1, 2, 3)] + ["*.sqlite", "*.duckdb", "*.log", "*.log.*"]
             if debug else None)

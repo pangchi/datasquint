@@ -95,11 +95,18 @@ CSV_OPTS = "normalize_names=true, sample_size=-1, null_padding=true"
 
 
 # ------------------------------------------------------------------ files -> DuckDB tables
+EXCEL_ERRORS = {"#N/A", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#NULL!", "#SPILL!", "#CALC!", "#GETTING_DATA"}
+
+
 def xcell(v):
     """An Excel value as CSV text, the way Datasquint converts it (so column types match)."""
-    if v is None:
+    # Both Excel readers (python-calamine and openpyxl) give the same CSV text: error cells are empty
+    # (calamine already does that), and a date-time at exactly midnight is a date (calamine returns dates).
+    if v is None or (isinstance(v, str) and v in EXCEL_ERRORS):
         return ""
     if isinstance(v, datetime.datetime):
+        if not (v.hour or v.minute or v.second or v.microsecond):
+            return v.date().isoformat()
         return v.isoformat(sep=" ")
     if isinstance(v, (datetime.date, datetime.time)):
         return v.isoformat()
@@ -152,33 +159,34 @@ def block_rows(load, path):
             yield ([xcell(v) for v in cells] + [""] * width)[:width]
 
 
+def read_csv(con, name, path, opts):
+    con.execute(f"CREATE TABLE {name} AS SELECT * FROM read_csv(?, {', '.join(x for x in (CSV_OPTS, opts) if x)})", [path])
+
+
 def load_table(con, t, folder, tmp):
-    import duckdb
     path = os.path.join(folder, t["file"])
     if not os.path.exists(path):
         sys.exit(f"Missing data file: {path}\nPut the original '{t['file']}' there, or pass --data FOLDER.")
     load, name = t["load"], '"' + t["name"].replace('"', '""') + '"'
+    opts = load.get("opts")   # the read_csv settings Datasquint used for this table
     if load.get("parts"):
         out = os.path.join(tmp, t["name"] + ".csv")
         write_csv(out, block_rows(load, path))
-        header = "true" if load.get("header") else "auto"
-        con.execute(f"CREATE TABLE {name} AS SELECT * FROM read_csv(?, {CSV_OPTS}, delim=',', header={header})", [out])
+        read_csv(con, name, out, opts if opts is not None else "delim=','" + (", header=true" if load.get("header") else ""))
     elif load["kind"] == "sheet":
         off, width = load.get("col_offset", 0), load.get("width")
         out = os.path.join(tmp, t["name"] + ".csv")
         write_csv(out, ([xcell(v) for v in (row[off:off + width] if width else row[off:])]
                         for _, row in sheet_rows(path, load["sheet"]) if not blank(row)))
-        con.execute(f"CREATE TABLE {name} AS SELECT * FROM read_csv(?, {CSV_OPTS})", [out])
+        read_csv(con, name, out, opts or "")
     else:
-        delim = ", delim='\\t'" if load.get("delim") == "\t" else ""
-        try:
-            con.execute(f"CREATE TABLE {name} AS SELECT * FROM read_csv(?, {CSV_OPTS}{delim})", [path])
-        except duckdb.Error:   # not UTF-8 (e.g. saved by Excel as Windows-1252): convert, then load
-            out = os.path.join(tmp, t["name"] + "_utf8.csv")
-            with open(path, encoding=load.get("encoding") or "latin-1", newline="") as fi, \
-                    open(out, "w", encoding="utf-8", newline="") as fo:
+        src = path
+        enc = load.get("encoding") or "utf-8-sig"
+        if not enc.startswith("utf-8"):   # e.g. saved by Excel as Windows-1252: convert, as Datasquint did
+            src = os.path.join(tmp, t["name"] + "_utf8.csv")
+            with open(path, encoding=enc, newline="") as fi, open(src, "w", encoding="utf-8", newline="") as fo:
                 fo.write(fi.read())
-            con.execute(f"CREATE TABLE {name} AS SELECT * FROM read_csv(?, {CSV_OPTS}{delim})", [out])
+        read_csv(con, name, src, opts if opts is not None else ("delim='\\t'" if load.get("delim") == "\t" else ""))
     n = con.execute(f"SELECT count(*) FROM {name}").fetchone()[0]
     print(f"  loaded {t['name']}: {n:,} rows from {t['file']}" + (f" (sheet {t['sheet']})" if t.get("sheet") else ""))
 
