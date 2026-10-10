@@ -50,7 +50,7 @@ The panel button at the top left of the main area hides or shows the sidebar.
 
 - **Enter** sends; **Shift+Enter** starts a new line.
 - The 📎 button attaches files. You can also drag files onto the window or paste images.
-- While an answer is being written, the send button becomes a **■ stop** button.
+- While an answer is being written, the send button becomes a **■ stop** button. Click it or press **Esc** to stop the answer. What was written so far is kept; type *"continue"* to carry on, or use **Regenerate** to start it again. (With a window like Settings open, Esc closes that window instead.)
 
 ## Asking questions
 

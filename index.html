@@ -1342,8 +1342,17 @@ function editMessage(i, wrap){
 function setBusy(b){
   $("#sendIcon").innerHTML = b ? ICON_STOP : ICON_SEND;
   $("#send").setAttribute("aria-label", b ? "Stop" : "Send");
+  $("#send").title = b ? "Stop the reply (Esc)" : "Send (Enter)";
   updateSend();
 }
+// Esc stops a reply that's being written. With a dialog or the message editor open, Esc closes that instead.
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || e.defaultPrevented || !controller || e.isComposing) return;
+  if (document.querySelector("dialog[open]")) return;
+  e.preventDefault();
+  controller.abort();
+  notify("Stopped. The reply so far is kept; type “continue” to carry on.");
+});
 function updateSend(){
   if (controller) { $("#send").disabled = false; return; }
   const uploading = pending.some(p => p.status === "uploading");

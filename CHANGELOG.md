@@ -8,6 +8,11 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.5.0 — 2026-10-11
+
+### Added
+- **Esc stops a reply** while it's being written, like the ■ button: the text so far is kept and a notice suggests typing "continue". With a dialog or the message editor open, Esc closes that instead. The stop button's tooltip shows the shortcut.
+
 ## 2.4.0 — 2026-10-11
 
 ### Added
