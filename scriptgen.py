@@ -6,6 +6,7 @@ loaded it (same DuckDB options, same sheet conversion, same blocks for sheets ho
 connects to PostgreSQL for database queries, runs every query and saves each result as a CSV.
 """
 import datetime
+import os
 import pprint
 import re
 
@@ -45,6 +46,8 @@ def build(title, queries, file_tables, databases):
     needs = ["duckdb"] if file_tables else []
     if any(t["load"]["kind"] == "sheet" for t in file_tables):
         needs.append("openpyxl")
+    if any(t["load"].get("recalc") for t in file_tables):
+        needs.append("pycel")   # to calculate formulas the workbook saved without results (if no Excel/LibreOffice)
     if databases:
         needs.append('"psycopg[binary]"')
     db_notes = ""
@@ -121,6 +124,24 @@ def blank(cells):
     return not any(v is not None and str(v).strip() != "" for v in cells)
 
 
+# ------------------------------------------------------------------ formulas without saved results
+# (Datasquint's recalc.py, copied in so this script calculates them the same way)
+__RECALC__
+
+_calculated = {}
+
+
+def calculated(path, tmp):
+    """The workbook with formulas that had no saved result calculated (Excel, LibreOffice or pycel)."""
+    if path not in _calculated:
+        missing = uncached(path)
+        res = calculate(path, tmp, missing) if missing else {"path": path, "note": ""}
+        if res["note"]:
+            print("  " + res["note"])
+        _calculated[path] = res["path"] or path
+    return _calculated[path]
+
+
 def sheet_rows(path, sheet):
     """(Excel row number, values) for every row of a sheet."""
     from openpyxl import load_workbook
@@ -168,6 +189,8 @@ def load_table(con, t, folder, tmp):
     if not os.path.exists(path):
         sys.exit(f"Missing data file: {path}\nPut the original '{t['file']}' there, or pass --data FOLDER.")
     load, name = t["load"], '"' + t["name"].replace('"', '""') + '"'
+    if load.get("recalc"):   # Datasquint calculated this workbook's formulas with LibreOffice: do the same
+        path = calculated(path, tmp)
     opts = load.get("opts")   # the read_csv settings Datasquint used for this table
     if load.get("parts"):
         out = os.path.join(tmp, t["name"] + ".csv")
@@ -283,7 +306,12 @@ if __name__ == "__main__":
     tables_literal = pprint.pformat([{k: t[k] for k in ("name", "file", "sheet", "load")} for t in file_tables],
                                     indent=1, width=110, sort_dicts=False)
     dbs_literal = pprint.pformat(databases, indent=1, width=110, sort_dicts=False)
-    body = (body.replace("__FILE_TABLES__", tables_literal)
+    recalc_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "recalc.py"), encoding="utf-8").read()
+    recalc_src = recalc_src.split('"""', 2)[2].lstrip("\n") if recalc_src.startswith('"""') else recalc_src   # drop its docstring
+    recalc_src = re.sub(r"(?m)^import (os|re|sys|tempfile)\n", "", recalc_src)   # the script imports these already
+    body = (body.replace("__RECALC__", recalc_src if any(t["load"].get("recalc") for t in file_tables) else
+                         "def uncached(path):\n    return {}\n\n\ndef calculate(path, out_dir, missing):\n    return {\"path\": None, \"note\": \"\"}")
+                .replace("__FILE_TABLES__", tables_literal)
                 .replace("__DATABASES__", dbs_literal)
                 .replace("__QUERIES__", q_literal))
     return head + "\n" + body

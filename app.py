@@ -1224,6 +1224,9 @@ if __name__ == "__main__":
     print(f" * SQL over CSV/TSV/Excel files: {filesql.status()}"
           + (f", up to {MAX_TABLE_UPLOAD_MB} MB per file" if filesql.available() else f"; those files are read as text, up to {MAX_UPLOAD_MB} MB"))
     shown = "localhost" if host in ("127.0.0.1", "localhost") else ("<this computer's address>" if host in ("0.0.0.0", "::") else host)
+    import recalc
+    print(" * Excel formulas saved without results: " + ("not calculated (EXCEL_RECALC=off)" if filesql.EXCEL_RECALC == "off"
+          else f"calculated with {recalc.available()}"))
     print(f" * Open http://{shown}:{port} in your browser")
     print(f" * Error log: {LOG_PATH or 'console only (the log file could not be opened)'}")
     log.info("Datasquint %s starting on %s:%s (SQL over files: %s)", VERSION, host, port, filesql.status())

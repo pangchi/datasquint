@@ -116,6 +116,7 @@ CSV and Excel files become tables the AI can query, so totals and counts are **e
 Good to know:
 
 - Each file, and each Excel sheet, becomes one table, named after the file: `march_orders.csv` becomes `march_orders`, and sheet *Defects* of `qa.xlsx` becomes `qa_defects`.
+- **Formulas give their values.** A cell with a formula loads as its result (for example `0.5`), never as the formula. If the file was made by a program that didn't calculate its formulas, Datasquint calculates them (with Excel or LibreOffice if the server has them, or its own calculator for smaller files) and the chip says so. If it can't, the chip shows a ⚠ note saying why: open the file in Excel, save it, and attach it again.
 - **Several tables on one sheet are fine.** If tables are separated by an empty row or an empty column, each becomes its own table, and the file's chip shows how many were found (for example *4 tables*). A title line above a table, like *Weekly QA report*, names it; otherwise it's named after its first column. Leave at least one empty row or column between tables, and give each its own header row. An empty row *inside* a table is fine: rows that carry on below it stay in the same table.
 - Column names become lower case with underscores: *Unit Price ($)* becomes `unit_price`.
 - The first row should hold the column names.

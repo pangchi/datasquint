@@ -26,6 +26,9 @@ import logging
 import mmap
 import os
 import re
+import shutil
+
+import recalc
 import threading
 import time
 
@@ -46,6 +49,9 @@ PREVIEW_LINES = 15
 MEMORY_LIMIT = os.getenv("FILES_SQL_MEMORY", "1GB")
 # "calamine" (default, ~10x faster, ~1 GB RAM per million-row sheet) or "openpyxl" (slow, low memory)
 EXCEL_READER = os.getenv("EXCEL_READER", "calamine").strip().lower()
+# Formulas saved without their results (by programs that don't calculate): "auto" calculates them (Excel,
+# LibreOffice or the built-in calculator, see recalc.py); "off" just reports them.
+EXCEL_RECALC = os.getenv("EXCEL_RECALC", "auto").strip().lower()
 # Split sheets/CSVs holding several tables into one table each (1 = on, the default)
 SPLIT_TABLES = os.getenv("SPLIT_TABLES", "1").strip().lower() not in ("0", "false", "no", "off")
 MAX_SPLIT_TABLES = int(os.getenv("MAX_SPLIT_TABLES", 30))   # more blocks than this: keep it as one table
@@ -501,11 +507,14 @@ def _label(part, k):
     return f"table_{k + 1}"
 
 
+
 BASE_OPTS = "normalize_names=true, sample_size=-1, null_padding=true"
 OUR_CSV = "delim=',', quote='\"', escape='\"'"   # CSVs Datasquint wrote itself (sheets, split tables)
 TEXT_NOTE = ("Some columns had mixed or unreadable values, so all columns were loaded as text; "
              "cast them in SQL (e.g. qty::INTEGER, day::DATE).")
 SKIP_NOTE = "Some malformed lines couldn't be read and were left out."
+FORMULA_NOTE = ("Some formula cells in this sheet had no saved result in the file, so they are empty (NULL); "
+                "say so if a question depends on them.")
 
 
 def _attempts(dialect, extra=""):
@@ -542,9 +551,23 @@ def prepare(path, name, folder, warnings=None):
     """
     warnings = warnings if warnings is not None else []
     ext = os.path.splitext(name)[1].lower()
+    recalced, missing = None, {}
     if ext in EXCEL_EXTS:
+        missing = recalc.uncached(path)
+        read_from = path
+        if missing:
+            if EXCEL_RECALC == "off":
+                n = sum(missing.values())
+                warnings.append(f"{n:,} formula cell{'s' if n != 1 else ''} have no saved result, so they're empty "
+                                "(calculating them is turned off: EXCEL_RECALC=off). Open the file in Excel, save it and attach it again.")
+            else:
+                res = recalc.calculate(path, os.path.join(folder, "recalc"), missing)
+                warnings.append(res["note"])
+                if res["path"]:
+                    read_from, recalced = res["path"], res["engine"]
+                    missing = res.get("empty") or {}   # only cells still empty need telling the model about
         try:
-            sources = [(sheet, p, None, coords) for sheet, p, coords in _xlsx_sheets(path, folder, warnings)]
+            sources = [(sheet, p, None, coords) for sheet, p, coords in _xlsx_sheets(read_from, folder, warnings)]
         except ValueError:
             raise
         except BaseException as e:  # don't let a reader panic take down the request
@@ -612,6 +635,9 @@ def prepare(path, name, folder, warnings=None):
                     labels.add(label)
                     spec = _load_spec(sheet, coords, encoding, part, delim)
                     spec["opts"] = popts
+                    if recalced:
+                        spec["recalc"] = recalced
+
                     out.append({"table": sub, "sheet": sheet, "block": label, "title": part["title"] or "",
                                 "load": spec, **({"note": pnote} if pnote else {}),
                                 "columns": [[c[0], c[1]] for c in con.execute(f"DESCRIBE {sub}").fetchall()],
@@ -619,15 +645,22 @@ def prepare(path, name, folder, warnings=None):
                                 "src": os.path.basename(part["path"])})
                     if pnote:
                         warnings.append(f"{label}: {pnote}")
+                    if missing.get(sheet):   # some cells still empty: tell the model (the chip already says it once)
+                        out[-1]["note"] = (out[-1].get("note", "") + " " + FORMULA_NOTE).strip()
                 continue
             rows = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
             if cols:
                 spec = _load_spec(sheet, coords, encoding, None, delim)
                 spec["opts"] = opts
+                if recalced:
+                    spec["recalc"] = recalced
+
                 out.append({"table": table, "sheet": sheet, "columns": cols, "rows": int(rows), "load": spec,
                             **({"note": note} if note else {}), "src": os.path.basename(src)})
                 if note:
                     warnings.append(f"{where[0].upper() + where[1:]}: {note}")
+                if missing.get(sheet):
+                    out[-1]["note"] = (out[-1].get("note", "") + " " + FORMULA_NOTE).strip()
     finally:
         con.close()
     if not out:
@@ -807,6 +840,9 @@ def head_text(folder, tables, max_lines=200):
 def cleanup(folder):
     """Delete intermediate CSVs (Excel sheets, UTF-8 copies) once the tables and preview exist."""
     for f in os.listdir(folder):
+        if f == "recalc":
+            shutil.rmtree(os.path.join(folder, f), ignore_errors=True)
+            continue
         if f.startswith(("sheet_", "source_", "block_")) and f.endswith(".csv"):
             try:
                 os.remove(os.path.join(folder, f))

@@ -8,6 +8,23 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.7.0 — 2026-10-11
+
+### Added
+- **Formulas saved without results can be calculated without LibreOffice.** Datasquint now tries, in order: **Microsoft Excel** (Windows, if installed; hidden, macros disabled, in a copy), **LibreOffice**, then a **built-in calculator** (`pycel`) for smaller files: up to 5,000 such formulas, 20 MB and 120 s (`PYCEL_MAX_FORMULAS`, `PYCEL_MAX_MB`, `PYCEL_TIME_LIMIT`). The built-in calculator matched LibreOffice on test workbooks (IF, NA, cross-sheet SUM/AVERAGEIF, errors); formulas using functions it doesn't support stay empty and are reported per sheet.
+- The chip says which calculator was used, or why none could; startup lists the calculators found.
+- Python scripts embed the same calculation code (`recalc.py`), so they calculate such workbooks the same way.
+- `RECALC_ENGINES`, `PYCEL_MAX_FORMULAS`, `PYCEL_MAX_MB`, `PYCEL_TIME_LIMIT` settings; `pycel` and (Windows only) `pywin32` in `requirements.txt`.
+
+## 2.6.0 — 2026-10-11
+
+### Added
+- **Excel formulas saved without their results are now handled.** Datasquint always reads formula results, not formula text, but some programs (report exporters, Python libraries) save formulas without results, which used to load silently as empty cells. Uploads are now scanned for this (under a second even for 200 MB workbooks), and:
+  - with LibreOffice installed on the server, the formulas are calculated in a copy and the values loaded; the chip notes it;
+  - without it, the cells load empty, the chip shows a ⚠ note with the fix (open and save in Excel), and the AI is told those cells are empty.
+- Python scripts made from such workbooks calculate them with LibreOffice too, so their tables still match Datasquint's.
+- `EXCEL_RECALC` (`auto`/`off`) and `LIBREOFFICE` settings.
+
 ## 2.5.0 — 2026-10-11
 
 ### Added

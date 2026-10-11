@@ -252,6 +252,7 @@ dialog input[type=text],dialog input[type=password],dialog select.full{width:100
 .edithint{flex:1;font-size:12px;color:var(--muted);min-width:180px;text-align:left}
 .edithint.err{color:var(--danger)}
 
+.chip.warn small{color:#b7791f}
 /* sent attachments: remove button */
 .att{position:relative;display:inline-block}
 .att .rm{position:absolute;top:-7px;right:-7px;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);background:var(--panel);color:var(--muted);font-size:11px;line-height:1;cursor:pointer;opacity:0;transition:opacity .15s;display:grid;place-items:center;padding:0}
@@ -547,6 +548,16 @@ dialog textarea{min-height:110px;resize:vertical}
 
 <script>
 const $ = s => document.querySelector(s);
+/* ---------- error logging: page errors and error messages shown to the user go to the server log ---------- */
+let logBudget = 20;   // per page load, so a broken page can't flood the log
+function serverLog(kind, message, extra = {}){
+  if (logBudget-- <= 0) return;
+  try { fetch("/api/log", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
+    body: JSON.stringify({ kind, message: String(message).slice(0, 1000), ...extra }) }).catch(() => {}); } catch {}
+}
+window.addEventListener("error", e => serverLog("page error", e.message,
+  { source: (e.filename || "").split("/").pop(), line: e.lineno ? `${e.lineno}:${e.colno}` : "", stack: e.error?.stack || "" }));
+window.addEventListener("unhandledrejection", e => serverLog("page error", e.reason?.message || String(e.reason), { stack: e.reason?.stack || "" }));
 const APP_VERSION = {{ version|tojson }};
 const STORE = "datasquint.v1";
 const OLD_STORES = ["pgpeek.v1", "dbhelper.v1", "flaskchat.v1"];   // earlier names (pgPeek, DB Helper, flask-chat); migrated once on first load
@@ -690,7 +701,8 @@ function uploadOne(item){
   const fail = msg => { item.status = "error"; item.error = msg; item.xhr = null; renderPending(); };
   xhr.onload = () => {
     let j = null; try { j = JSON.parse(xhr.responseText); } catch {}
-    if (xhr.status >= 200 && xhr.status < 300 && j && !j.error) { item.meta = j; item.status = "ready"; item.xhr = null; renderPending(); }
+    if (xhr.status >= 200 && xhr.status < 300 && j && !j.error) { item.meta = j; item.status = "ready"; item.xhr = null; renderPending();
+      if (j.table_error) notify(`${j.name} was read as text, not loaded as a table: ${j.table_error}`, true); }
     else fail(j?.error || `Upload failed (${xhr.status})`);
   };
   xhr.onerror = () => fail("Upload failed: couldn't reach the server");
@@ -709,7 +721,8 @@ function renderPending(){
   const box = $("#pending"); box.innerHTML = "";
   pending.forEach(p => {
     const c = document.createElement("div");
-    c.className = "chip" + (p.status === "error" ? " err" : ""); c.dataset.key = p.key;
+    c.className = "chip" + (p.status === "error" ? " err" : "") + (p.status === "ready" && tableIssue(p.meta) ? " warn" : ""); c.dataset.key = p.key;
+    if (p.status === "ready" && tableIssue(p.meta)) c.title = tableIssue(p.meta);
     const status = p.status === "uploading" ? uploadStatus(p) : p.status === "error" ? p.error
       : fmtSize(p.meta.size) + tableNote(p.meta) + (p.meta.stats ? ` · ${p.meta.stats.files} files` + (p.meta.stats.skipped ? `, ${p.meta.stats.skipped} skipped` : "") : "")
         + (p.meta.stats?.trimmed ? ` · ${p.meta.stats.trimmed} trimmed` : p.meta.truncated ? " · truncated" : "");
@@ -729,7 +742,7 @@ function attachmentsEl(atts, onRemove){
       img.onerror = () => img.replaceWith(document.createTextNode(a.name + " (unavailable)"));
       link.appendChild(img);
     }
-    else link.innerHTML = `<div class="chip"><div class="ficon">${esc(extOf(a.name))}</div><div class="meta"><b>${esc(a.name)}</b><small>${fmtSize(a.size)}${esc(tableNote(a))}${a.stats ? " · " + a.stats.files + " files" : ""}</small></div></div>`;
+    else link.innerHTML = `<div class="chip${tableIssue(a) ? " warn" : ""}" title="${esc(tableIssue(a))}"><div class="ficon">${esc(extOf(a.name))}</div><div class="meta"><b>${esc(a.name)}</b><small>${fmtSize(a.size)}${esc(tableNote(a))}${a.stats ? " · " + a.stats.files + " files" : ""}</small></div></div>`;
     if (!onRemove) { w.appendChild(link); return; }
     const box = document.createElement("span"); box.className = "att"; box.appendChild(link);
     const rm = document.createElement("button"); rm.className = "rm"; rm.type = "button"; rm.textContent = "✕";
@@ -1011,8 +1024,19 @@ function chatFileIds(c = cur()){
 }
 function chatHasTables(c = cur()){ return (c?.messages || []).some(m => (m.attachments || []).some(a => a.tables?.length)); }
 function canQuery(c = cur()){ return chatDbs(c).length > 0 || chatHasTables(c); }
+function tableIssue(x){
+  // why a CSV/Excel file isn't a table, or what went partly wrong while loading it (shown on hover)
+  if (x?.table_error) return `Read as text, not loaded as a table: ${x.table_error}`;
+  if (x?.warnings?.length) return `Loaded, with notes:\n• ${x.warnings.join("\n• ")}`;
+  return "";
+}
 function tableNote(x){
+  if (x?.table_error) return " · ⚠ read as text, not a table";
   if (!x?.tables?.length) return "";
+  if (x.warnings?.length) {
+    const rows = x.tables.reduce((n, t) => n + (+t.rows || 0), 0);
+    return ` · ${x.tables.length > 1 ? x.tables.length + " tables" : "table"}, ${rows.toLocaleString()} rows · ⚠ ${x.warnings.length} note${x.warnings.length > 1 ? "s" : ""}`;
+  }
   const rows = x.tables.reduce((n, t) => n + (+t.rows || 0), 0);
   return x.tables.length > 1 ? ` · ${x.tables.length} tables, ${rows.toLocaleString()} rows` : ` · table, ${rows.toLocaleString()} rows`;
 }
@@ -1318,8 +1342,17 @@ function editMessage(i, wrap){
 function setBusy(b){
   $("#sendIcon").innerHTML = b ? ICON_STOP : ICON_SEND;
   $("#send").setAttribute("aria-label", b ? "Stop" : "Send");
+  $("#send").title = b ? "Stop the reply (Esc)" : "Send (Enter)";
   updateSend();
 }
+// Esc stops a reply that's being written. With a dialog or the message editor open, Esc closes that instead.
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || e.defaultPrevented || !controller || e.isComposing) return;
+  if (document.querySelector("dialog[open]")) return;
+  e.preventDefault();
+  controller.abort();
+  notify("Stopped. The reply so far is kept; type “continue” to carry on.");
+});
 function updateSend(){
   if (controller) { $("#send").disabled = false; return; }
   const uploading = pending.some(p => p.status === "uploading");
@@ -1534,6 +1567,7 @@ $("#stDeleteUnused").onclick = () => storageDelete(stFiles.filter(f => !f.proces
 const EXPORT_FORMAT = "datasquint-chats";
 let toastTimer = null;
 function notify(text, isErr){
+  if (isErr) serverLog("shown to user", text);
   const t = $("#toast"); if (!t) return;
   t.textContent = text; t.className = isErr ? "err" : ""; t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, isErr ? 7000 : 4000);
