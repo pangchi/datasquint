@@ -8,6 +8,21 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.8.0 — 2026-10-12
+
+### Added
+- **Switch chats while a reply is being written.** Clicking another chat, **New chat**, or a chat in the Storage panel no longer waits for the reply: it keeps streaming into its own chat, and auto-run queries and the follow-up answer happen there too. Several chats can be answered at the same time.
+- Sidebar marks: a spinner on chats with a reply in progress, and a dot with a bold title on chats that finished while you were elsewhere (cleared when you open them).
+
+### Changed
+- Stop (■), **Esc**, Run, Run again, Regenerate and Edit act on the chat on screen only. Deleting a chat stops its reply. Removing an attachment or exporting waits only for that chat; importing chats and deleting files in Storage still wait until no reply is in progress.
+
+## 2.7.1 — 2026-10-12
+
+### Fixed
+- **Excel cells with line breaks (Alt+Enter) could stop a sheet from loading, or lose text.** A header with a line break, or a cell starting or ending with one, made the sheet fail to load as a table; a blank line inside a cell (two Alt+Enters) was silently removed. Blank rows between tables are now found from the Excel row numbers instead of empty lines in the intermediate CSV, so line breaks inside cells are never touched, and DuckDB retries with its single-threaded reader when quoted line breaks need it. Splitting several tables in one sheet works as before.
+- Windows-style line breaks (`\r\n`) inside cells are stored as `\n`, the same with either Excel reader and in Python scripts.
+
 ## 2.7.0 — 2026-10-11
 
 ### Added

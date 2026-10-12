@@ -133,6 +133,8 @@ def _xcell(v):
     # (calamine already does that), and a date-time at exactly midnight is a date (calamine returns dates).
     if v is None or (isinstance(v, str) and v in EXCEL_ERRORS):
         return ""
+    if isinstance(v, str) and "\r" in v:   # line breaks in cells as Excel's own Alt+Enter: a plain \n
+        return v.replace("\r\n", "\n").replace("\r", "\n")
     if isinstance(v, datetime.datetime):
         if not (v.hour or v.minute or v.second or v.microsecond):
             return v.date().isoformat()
@@ -185,22 +187,18 @@ class _Openpyxl:
 
 
 def _write_sheet(rows, dest):
-    """Write a sheet's rows to CSV, keeping blank rows as empty lines (DuckDB skips them; the splitter needs
-    the gaps). Returns (data rows written, rowmap, width)."""
+    """Write a sheet's non-blank rows to CSV. Returns (rows written, rowmap, width).
+
+    Blank rows aren't written: the splitter finds them as jumps in rowmap (the Excel row number of each CSV
+    record). Nothing here works line by line, so line breaks inside cells (Alt+Enter) are kept exactly.
+    """
     n = width = 0
     rowmap = array("I")
     with open(dest, "w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh)
-        blank = 0
         for r, row in enumerate(rows, start=1):
             if not any(v is not None and str(v).strip() != "" for v in row):
-                blank += 1
                 continue
-            if n and blank:
-                gap = min(blank, 2)
-                fh.write("\n" * gap)
-                rowmap.extend([r - 1] * gap)
-            blank = 0
             w.writerow([_xcell(v) for v in row])
             width = max(width, len(row))
             rowmap.append(r)
@@ -292,10 +290,15 @@ def _has_gaps(src):
         return False
 
 
-def _maybe_several(src, cols):
+def _row_gaps(rowmap):
+    """Blank rows between data rows of a sheet (a jump in Excel row numbers)?"""
+    return any(rowmap[k] - rowmap[k - 1] > 1 for k in range(1, len(rowmap)))
+
+
+def _maybe_several(src, cols, rowmap=None):
     """Cheap check: could this source hold more than one table (or a title row)?"""
-    # an empty header cell (a gap column or a title row), or a blank line with data after it
-    return any(_AUTO_COL.match(c) for c, _ in cols) or _has_gaps(src)
+    # an empty header cell (a gap column or a title row), or blank rows with data after them
+    return any(_AUTO_COL.match(c) for c, _ in cols) or (_row_gaps(rowmap) if rowmap is not None else _has_gaps(src))
 
 
 def _header_like(cells):
@@ -324,7 +327,7 @@ def _sniff_delim(path, delim):
         return ","
 
 
-def _split(src, delim, folder, idx):
+def _split(src, delim, folder, idx, rowmap=None):
     """Find the tables in a CSV: blocks between blank rows, split again at blank columns.
 
     Returns [{"path", "title", "header"}] for two or more tables (or one table that lost a title or
@@ -333,33 +336,27 @@ def _split(src, delim, folder, idx):
     """
     try:
         try:
-            return _split_inner(src, delim, folder, idx)
+            return _split_inner(src, delim, folder, idx, rowmap)
         except UnicodeDecodeError:
-            return _split_inner(_utf8_copy(src, folder, idx), delim, folder, idx)
+            return _split_inner(_utf8_copy(src, folder, idx), delim, folder, idx, rowmap)
     except Exception:   # never let the splitter break an upload: fall back to the normal load
         log.warning("Couldn't look for several tables in %s; loading it as one table", os.path.basename(src), exc_info=True)
         return None
 
 
-def _no_blank_lines(src, folder, idx):
-    """Copy of a sheet CSV without its empty lines (how sheets were loaded before splitting existed)."""
-    out = os.path.join(folder, f"source_{idx}_rows.csv")
-    with open(src, encoding="utf-8", newline="") as fi, open(out, "w", encoding="utf-8", newline="") as fo:
-        for line in fi:
-            if line.strip():
-                fo.write(line)
-    return out
-
-
-def _split_inner(src, delim, folder, idx):
+def _split_inner(src, delim, folder, idx, rowmap=None):
     delim = _sniff_delim(src, delim)
-    # pass 1: segments of non-blank rows, the columns each uses, and their first few rows
+    # pass 1: segments of non-blank rows, the columns each uses, and their first few rows.
+    # Records come from csv.reader, so a line break inside a quoted cell is part of the cell, not a new row.
+    # For sheets, blank rows aren't in the CSV: a jump in the Excel row numbers (rowmap) marks them.
     segs, cur = [], None
     for i, row in enumerate(_csv_rows(src, delim)):
         used = [j for j, c in enumerate(row) if c.strip()]
         if not used:
             cur = None
             continue
+        if rowmap is not None and i and i < len(rowmap) and rowmap[i] - rowmap[i - 1] > 1:
+            cur = None
         if cur is None:
             cur = {"start": i, "end": i, "cols": set(), "head": []}
             segs.append(cur)
@@ -521,7 +518,10 @@ def _attempts(dialect, extra=""):
     """read_csv settings to try in turn, each more forgiving: (options, note for the model or None)."""
     first = ", ".join(x for x in (dialect, extra) if x)
     loose = ", ".join(x for x in (dialect or "quote='\"'", extra, "strict_mode=false", "max_line_size=200000000") if x)
-    return [(first, None), (loose, None),
+    # DuckDB's parallel reader can't combine null_padding with line breaks inside quoted cells
+    serial = ", ".join(x for x in (first, "parallel=false") if x)
+    loose += ", parallel=false"
+    return [(first, None), (serial, None), (loose, None),
             (loose + ", all_varchar=true", TEXT_NOTE),
             (loose + ", all_varchar=true, ignore_errors=true", TEXT_NOTE + " " + SKIP_NOTE)]
 
@@ -598,26 +598,14 @@ def prepare(path, name, folder, warnings=None):
             except ValueError as e:
                 loaded, opts, note, err = False, "", None, e   # the splitter may still manage (e.g. a title row)
             cols = [[c[0], c[1]] for c in con.execute(f"DESCRIBE {table}").fetchall()] if loaded else []
-            parts = (_split(src, delim, folder, i)
-                     if SPLIT_TABLES and (not loaded or _maybe_several(src, cols)) else None)
-            if loaded and not parts and sheet and _has_gaps(src):
-                # one table after all: load it without the blank rows kept for the splitter (in a one-column
-                # sheet DuckDB would read them as empty rows)
-                try:
-                    opts, note = _create(con, table, _no_blank_lines(src, folder, i), _attempts(dialect))
-                    cols = [[c[0], c[1]] for c in con.execute(f"DESCRIBE {table}").fetchall()]
-                except ValueError:
-                    opts, note = _create(con, table, src, _attempts(dialect))
+            rowmap = coords[0] if coords else None
+            parts = (_split(src, delim, folder, i, rowmap)
+                     if SPLIT_TABLES and (not loaded or _maybe_several(src, cols, rowmap)) else None)
             if not loaded and not parts:
-                if sheet:   # Excel: one more try without the blank rows kept for the splitter
-                    try:
-                        opts, note = _create(con, table, _no_blank_lines(src, folder, i), _attempts(dialect))
-                        cols = [[c[0], c[1]] for c in con.execute(f"DESCRIBE {table}").fetchall()]
-                    except ValueError as e:
-                        warnings.append(f"Sheet '{sheet}' couldn't be loaded as a table ({e}).")
-                        continue
-                else:
-                    raise err
+                if sheet:
+                    warnings.append(f"Sheet '{sheet}' couldn't be loaded as a table ({err}).")
+                    continue
+                raise err
             if parts:
                 con.execute(f"DROP TABLE IF EXISTS {table}")
                 labels = set()

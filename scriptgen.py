@@ -107,6 +107,8 @@ def xcell(v):
     # (calamine already does that), and a date-time at exactly midnight is a date (calamine returns dates).
     if v is None or (isinstance(v, str) and v in EXCEL_ERRORS):
         return ""
+    if isinstance(v, str) and "\r" in v:   # line breaks in cells as Excel's own Alt+Enter: a plain \n
+        return v.replace("\r\n", "\n").replace("\r", "\n")
     if isinstance(v, datetime.datetime):
         if not (v.hour or v.minute or v.second or v.microsecond):
             return v.date().isoformat()

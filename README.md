@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.7.0** · [Changelog](CHANGELOG.md)
+**Version 2.8.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -54,7 +54,7 @@ To skip pressing Run, turn on **Settings → Run the model's SQL queries automat
 
 **Colour theme**: **Settings → Appearance** picks System (follows your computer's light or dark mode), Light or Dark, and **Colour** picks one of seven colours: Teal (the default), Blue, Violet, Green, Amber, Rose or Graphite. Choices preview as you click and apply on **Save**; Cancel puts the old theme back. The theme is kept per browser (local storage key `datasquint.theme`), and the Help page follows it.
 
-**Typing and editing messages**: Enter sends and Shift+Enter starts a new line; **■** or **Esc** stops a reply being written (the text so far is kept, and auto-run doesn't run its SQL); the message box grows to 40% of the window, then scrolls. **Edit** under any of your messages opens it in place, with its line breaks, in a box that grows to 60% of the window. There, Enter adds a new line, **Ctrl+Enter** (⌘+Enter on Mac) or **Save & send** resends it, and **Esc** or **Cancel** leaves it unchanged. Saving replaces that message and everything after it (the editor says how many messages that is), and keeps the message's attachments.
+**Typing and editing messages**: Enter sends and Shift+Enter starts a new line; **■** or **Esc** stops a reply being written (the text so far is kept, and auto-run doesn't run its SQL); you can **switch to another chat or start a new one while a reply is being written**: it keeps going in its own chat, several chats can be answered at once, and the sidebar shows a spinning mark on chats with a reply in progress and a dot on chats that got a reply while you were elsewhere. Stop and Esc act only on the chat on screen; the message box grows to 40% of the window, then scrolls. **Edit** under any of your messages opens it in place, with its line breaks, in a box that grows to 60% of the window. There, Enter adds a new line, **Ctrl+Enter** (⌘+Enter on Mac) or **Save & send** resends it, and **Esc** or **Cancel** leaves it unchanged. Saving replaces that message and everything after it (the editor says how many messages that is), and keeps the message's attachments.
 
 The API client is created exactly as:
 
@@ -244,6 +244,7 @@ Disk use per file is the original (kept so it can be opened from the chat) plus 
 - Each Excel sheet is read with `python-calamine`; if that fails for a sheet, that sheet is read again with `openpyxl`. A sheet neither can read is skipped and reported, and the other sheets still load.
 - If DuckDB can't read a file with its normal settings, it tries more forgiving ones in turn: lenient parsing and very long lines; then **every column as text** (the model is told, and casts in SQL); then skipping malformed lines. Each fallback is reported.
 - Excel error cells (`#N/A`, `#DIV/0!`…) become empty values, and date-times at midnight become dates, the same whichever reader was used.
+- Line breaks inside cells (Alt+Enter), including blank lines, are kept exactly as text (`\n`), in data and in headers (a header *Qty⏎(pcs)* becomes `qty_pcs`).
 
 If a file still can't become a table, it's read as text instead (under the 20 MB limit) and **its chip says why**, with a ⚠ and a notice: for example a password-protected workbook, an old `.xls` renamed to `.xlsx`, `FILE_TABLES=0`, or DuckDB not installed on the server. Partial problems (a skipped sheet, text-only columns) show as *⚠ N notes* on the chip; hover to read them.
 
