@@ -8,6 +8,12 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.9.0 — 2026-10-13
+
+### Added
+- **Paste tables from Excel, Word, Outlook or web pages.** Pasting cells into the message box attaches them as `pasted-table-N.csv`, a table the model can query. Excel's clipboard quoting is handled (line breaks, tabs and quotes inside cells), HTML tables are used when the copied text has no tabs, and numeric columns with thousands separators load as numbers. Ctrl+Shift+V pastes as plain text; text that isn't a table pastes as before.
+- **Excel reminder** when attaching .xlsx/.xlsm: values may differ from what Excel shows; CSV (or pasting the cells) is preferred for exact results. Can be hidden, and turned back on in Settings.
+
 ## 2.8.0 — 2026-10-12
 
 ### Added

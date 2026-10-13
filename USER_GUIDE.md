@@ -89,7 +89,11 @@ At most 200 rows come back to the AI from one query, so ask for summaries (total
 
 ## Attaching files
 
-Click 📎, drag files anywhere onto the window, or paste an image. You can attach several at once. Each file shows as a chip above the message box:
+Click 📎, drag files anywhere onto the window, or paste an image. You can attach several at once.
+
+**Paste a table**: copy cells in Excel (or a table in Word, Outlook or a web page) and paste them into the message box with Ctrl+V. They're attached as *pasted-table-1.csv*, a table the AI can query, using the first row as column names. The values are exactly what Excel shows. To paste them as plain text instead, use **Ctrl+Shift+V**.
+
+**Excel files**: when you attach one, a reminder appears: what Datasquint reads from a workbook can differ slightly from what Excel shows (number formats, rounding, merged cells, hidden rows, formulas). For exact results, save the sheet as CSV, or copy and paste the cells. Click **Don't remind me** to hide it; turn it back on in Settings. Each file shows as a chip above the message box:
 
 - *Uploading 45%* while it uploads.
 - *Loading table…* while a CSV or Excel file is turned into a table.

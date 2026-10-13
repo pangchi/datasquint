@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.8.0** · [Changelog](CHANGELOG.md)
+**Version 2.9.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -169,6 +169,10 @@ Connections are stored in `connections.sqlite`. Database passwords, SSH password
 ## Attaching files
 
 Attach files with the paperclip, by dragging them onto the window, or by pasting images. They upload immediately and show as chips with upload progress; removing a chip cancels its upload, and Send waits until uploads finish.
+
+**Pasting tables**: cells copied from Excel, Word, Outlook or a web page and pasted into the message box are attached as `pasted-table-1.csv` (then `-2`, …), so they become a table the model can query instead of a block of text in the message. The first row is the header. Excel's clipboard format is read properly: cells with line breaks, tabs or quotes come through intact. Numbers copied with thousands separators (`1,234.50`) load as numbers when the whole column is numeric. Copied cells hold the values *as shown* in Excel, so they match what you see. A paste is treated as a table when it has at least 2 rows and 2 columns, a header with 2+ filled cells and (nearly) every row the same width; anything else pastes as text. **Ctrl+Shift+V** pastes a table as plain text. Nothing is converted when tables from files are off (`FILE_TABLES=0`).
+
+**Excel reminder**: when an Excel file is attached, a note says that values are read as stored in the file, so number formats, rounding, merged cells, hidden rows and formulas can differ from what Excel shows, and suggests CSV (or pasting the cells) for exact results. **Don't remind me** hides it; Settings → *Remind me that Excel data may not be exact* turns it back on.
 
 | Type | Files | Sent to the model as |
 |---|---|---|
