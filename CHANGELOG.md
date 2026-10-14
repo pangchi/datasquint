@@ -8,6 +8,11 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.9.1 — 2026-10-14
+
+### Changed
+- Sidebar buttons reordered: Database, Storage, Export all chats, Import chats, Delete all chats, Settings, Help.
+
 ## 2.9.0 — 2026-10-13
 
 ### Added

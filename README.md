@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.9.0** · [Changelog](CHANGELOG.md)
+**Version 2.9.1** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
