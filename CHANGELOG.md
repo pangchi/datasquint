@@ -8,6 +8,16 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.10.1 — 2026-10-16
+
+### Changed
+- The sidebar resize edge has a visible grip: a small pill with three dots in the middle of the edge, in the theme's colours, highlighted on hover, while dragging and when focused.
+
+## 2.10.0 — 2026-10-16
+
+### Added
+- **Adjustable sidebar width.** Drag the edge between the sidebar and the chat (180–520 px, at most half the window); double-click to reset. Keyboard: Tab to the edge, then ←/→ (Shift for bigger steps), Home to reset. Remembered per browser. Hidden on narrow screens, where the sidebar opens over the chat.
+
 ## 2.9.1 — 2026-10-14
 
 ### Changed

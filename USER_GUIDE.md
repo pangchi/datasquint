@@ -51,6 +51,7 @@ The panel button at the top left of the main area hides or shows the sidebar.
 - **Enter** sends; **Shift+Enter** starts a new line.
 - The 📎 button attaches files. You can also drag files onto the window or paste images.
 - While an answer is being written, the send button becomes a **■ stop** button. Click it or press **Esc** to stop the answer. What was written so far is kept; type *"continue"* to carry on, or use **Regenerate** to start it again. (With a window like Settings open, Esc closes that window instead.)
+- **Make the sidebar wider or narrower** by dragging the small grip with three dots on its right edge, or anywhere along that edge (it lights up in your theme colour when you point at it). Double-click the edge to put it back to normal. Datasquint remembers the width.
 - You don't have to wait: **click another chat, or New chat, while an answer is being written.** The answer carries on in its own chat, including any queries it runs automatically. In the sidebar, a spinning mark shows chats still being answered, and a dot (with the name in bold) shows chats that got an answer while you were looking elsewhere. You can ask something in another chat at the same time. Stop and Esc only stop the chat you're looking at; deleting a chat stops its answer.
 
 ## Asking questions
