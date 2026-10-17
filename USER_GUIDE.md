@@ -215,6 +215,9 @@ Usually your administrator sets these up. To add one yourself: **Database → + 
 | System prompt | Standing instructions for every chat, such as *"Answer briefly. Use Singapore dates."* |
 | Temperature | 0 gives focused, repeatable answers; higher values give more varied wording. 0.2–0.7 suits data questions. |
 | Run SQL automatically | Runs the AI's queries without pressing **Run**. It stops after 5 queries in a row so a confused AI can't loop. |
+| Token usage | How many tokens the AI has used since the last reset, per model: *in* is what was sent to the AI, *out* is what it wrote. Also shows this chat's total. **Reset counters** starts again from zero. The counts are for everyone using this Datasquint, not just you. |
+
+Each answer also shows its own tokens under it, such as *321 in · 33 out*. A **≈** means the AI service didn't report the numbers, so they're estimated.
 
 Appearance and colour are remembered in this browser only, so each person (and each browser) can pick their own.
 

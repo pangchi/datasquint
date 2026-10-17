@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.10.1** · [Changelog](CHANGELOG.md)
+**Version 2.11.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -53,6 +53,8 @@ Open http://127.0.0.1:5000 (or the port you set with `PORT` in `.env`; the start
 To skip pressing Run, turn on **Settings → Run the model's SQL queries automatically**.
 
 **Colour theme**: **Settings → Appearance** picks System (follows your computer's light or dark mode), Light or Dark, and **Colour** picks one of seven colours: Teal (the default), Blue, Violet, Green, Amber, Rose or Graphite. Choices preview as you click and apply on **Save**; Cancel puts the old theme back. The theme is kept per browser (local storage key `datasquint.theme`), and the Help page follows it.
+
+**Token usage**: each answer shows the tokens it used under it, e.g. *321 in · 33 out* (sent to the AI · written by it; over all requests when files were read in parts). **Settings → Token usage** shows the totals since the last reset, per model: requests, tokens in, out and total, plus the current chat's total. **Reset counters** sets them back to zero (after a confirmation); the numbers under answers are kept. The counts come from the AI service's own usage report: Datasquint asks for it on streamed replies (`stream_options: {include_usage: true}`). If the service rejects that option, Datasquint notices once and stops asking; if it doesn't report usage, tokens are estimated at about 4 characters per token, shown with **≈** and counted separately in Settings. A stopped answer still counts what it used so far. Counters are kept on the server in `usage.json` (`USAGE_FILE`), survive restarts, and are shared by everyone using that server; there's no per-user split, and anyone who can open Settings can reset them.
 
 **Sidebar width**: drag the grip (the small pill with three dots) on the edge between the sidebar and the chat, or anywhere along that edge, to make the sidebar wider or narrower (180–520 px, at most half the window). Double-click the edge to reset it to 260 px. With the edge focused (Tab), ← and → change it in 16 px steps (Shift for 64 px) and Home resets it. The width is remembered per browser (local storage key `datasquint.sidebarWidth`). The ☰ button still hides and shows the sidebar; on narrow screens it opens over the chat and has no handle.
 
@@ -424,6 +426,8 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `LOG_FILE` | `./logs/datasquint.log` | Error log file (see [Error log](#error-log)) |
 | `LOG_LEVEL` | `INFO` | `ERROR`, `WARNING`, `INFO` (adds one line per upload, query and reply) or `DEBUG` |
 | `LOG_MAX_MB` / `LOG_BACKUPS` | `10` / `5` | Rotate the log at this size, keeping this many old files |
+| `USAGE_FILE` | `./usage.json` | Where the token counters are kept (see Token usage under [Quick start](#quick-start)) |
+| `STREAM_USAGE` | `auto` | `auto` asks the AI service to report token usage on streamed replies, and stops asking if it rejects the option; `off` never asks (usage is then estimated) |
 | `FLASK_DEBUG` | `0` | `1` turns on Flask's debug mode (auto-reload on code changes, in-browser debugger) for development only. Never combine it with `HOST=0.0.0.0`: the debugger can run code. |
 
 ### Dependencies
@@ -496,6 +500,7 @@ USER_GUIDE.md        Guide for everyday users; served in the app at /guide (Help
 CHANGELOG.md         What changed in each version
 version.py           The version number (single place to change it)
 logsetup.py          Error log: rotating file, secret masking, request details
+usage.py             Token counters per model (usage.json), with reset
 recalc.py            Calculates Excel formulas saved without results (Excel, LibreOffice or pycel)
 requirements.txt
 env.example          Settings template: copy it to .env and fill it in
@@ -512,7 +517,7 @@ All responses are JSON unless noted.
 
 **Chat**
 
-- `POST /api/chat` — body `{messages, model, temperature, system, dbs}`. User messages may include `attachments: [{id}]`; `dbs` is a list of connection ids whose notes, schemas and query instructions are added to the system prompt. Returns `application/x-ndjson`: `{"delta": text}` lines, plus `{"parts": n}` and `{"status": text}` when splitting, then `{"done": true}` or `{"error": text}`.
+- `POST /api/chat` — body `{messages, model, temperature, system, dbs}`. User messages may include `attachments: [{id}]`; `dbs` is a list of connection ids whose notes, schemas and query instructions are added to the system prompt. Returns `application/x-ndjson`: `{"delta": text}` lines, plus `{"parts": n}` and `{"status": text}` when splitting, then `{"usage": {prompt, completion, estimated}}` and `{"done": true}`, or `{"error": text}`.
 - `GET /api/models` — `{models}`
 - `GET /api/config` — default model, system prompt, base URL, upload limit, allowed extensions
 
@@ -538,6 +543,8 @@ All responses are JSON unless noted.
 - `POST /api/tables` — `{dbs, files, refresh?}`; returns `{sources: [{id, name, kind: "files"|"db", error?, tables: [{name, rows, columns: [[name, type]], file?, sheet?, title?, schema?, view?}]}]}`
 - `POST /api/tables/preview` — `{source, table, dbs, files, offset, limit (≤200), sort?, desc?, q?}`; returns `{columns, rows, offset, limit, total, estimate, ms, sql}` or `{error}` with 400. `source` is `files` or a connection id; `table` must be one `/api/tables` listed.
 - `POST /api/log` — `{kind, message, source?, line?, stack?}` from the page (JavaScript errors and error messages shown to the user) into the server log; at most 30 a minute per client
+- `GET /api/usage` — token counters since the last reset: `{since, total: {requests, prompt, completion, total, estimated_requests}, models: [{model, …same fields}]}`
+- `POST /api/usage/reset` — sets the counters to zero; returns the same shape
 - `GET /api/logs?lines=200` — the end of the log as text; only from the server itself (403 otherwise)
 - `POST /api/script` — `{title, queries: [{sql, title?}], dbs, files}`; returns a `text/x-python` attachment with header `X-Queries` (queries included), or `{error}` with 400 when none can be resolved.
 - `POST /api/db/export` — same body as `/api/db/query`; returns the full result as `text/csv` (UTF-8 with BOM), up to `DB_EXPORT_MAX_ROWS`, with headers `X-Row-Count`, `X-Truncated` (`1` if cut off) and `X-Max-Rows`; `{error}` with 400 on failure

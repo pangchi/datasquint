@@ -64,8 +64,22 @@ button,select,textarea,input{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 /* sidebar */
-aside{width:260px;flex:none;background:var(--side);color:var(--side-ink);display:flex;flex-direction:column;padding:12px;gap:8px;transition:margin .2s}
-aside.hidden{margin-left:-260px}
+aside{width:var(--side-w,260px);flex:none;background:var(--side);color:var(--side-ink);display:flex;flex-direction:column;padding:12px;gap:8px;transition:margin .2s}
+aside.hidden{margin-left:calc(-1 * var(--side-w,260px))}
+/* drag handle between the sidebar and the chat */
+#sideResize{flex:none;width:8px;margin:0 -4px;position:relative;z-index:5;cursor:col-resize;touch-action:none;outline:none}
+#sideResize::after{content:"";position:absolute;inset:0 3px;background:transparent;transition:background .15s}
+#sideResize:hover::after,#sideResize:focus-visible::after,body.resizing #sideResize::after{background:var(--accent)}
+/* grip: a small pill with three dots in the middle of the edge, so the handle is easy to find */
+#sideResize::before{content:"";position:absolute;z-index:1;top:50%;left:50%;width:10px;height:42px;transform:translate(-50%,-50%);border-radius:5px;
+  border:1px solid var(--line);box-shadow:0 1px 3px rgba(0,0,0,.18);
+  background:radial-gradient(circle at 50% 34%,var(--muted) 1.4px,transparent 1.9px),radial-gradient(circle at 50% 50%,var(--muted) 1.4px,transparent 1.9px),radial-gradient(circle at 50% 66%,var(--muted) 1.4px,transparent 1.9px),var(--panel);
+  transition:border-color .15s,background .15s}
+#sideResize:hover::before,#sideResize:focus-visible::before,body.resizing #sideResize::before{border-color:var(--accent);
+  background:radial-gradient(circle at 50% 34%,var(--accent-ink) 1.4px,transparent 1.9px),radial-gradient(circle at 50% 50%,var(--accent-ink) 1.4px,transparent 1.9px),radial-gradient(circle at 50% 66%,var(--accent-ink) 1.4px,transparent 1.9px),var(--accent)}
+aside.hidden + #sideResize{display:none}
+body.resizing{cursor:col-resize;user-select:none}
+body.resizing aside{transition:none}
 .newchat{display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--side-hi);border-radius:8px;background:none;cursor:pointer;color:#fff}
 .newchat:hover{background:var(--side-hi)}
 #chatList{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:4px}
@@ -125,6 +139,18 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:6px;paddi
 .status{font-size:13px;color:var(--muted);margin-bottom:4px}
 .status:empty{display:none}
 .partsnote{font-size:12px;color:var(--muted);padding:3px 7px}
+.tokens{font-size:12px;color:var(--muted);padding:3px 7px;font-variant-numeric:tabular-nums}
+/* token usage in Settings */
+.usagebox{border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:200px}
+.usagebox table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.usagebox th,.usagebox td{padding:5px 8px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+.usagebox th:first-child,.usagebox td:first-child{text-align:left;white-space:normal;word-break:break-all}
+.usagebox th{font-weight:600;color:var(--muted);background:var(--bg)}
+.usagebox tr.sum td{font-weight:600;border-bottom:0}
+.usagebox .none{padding:10px;color:var(--muted);font-size:13px}
+.usagebar{display:flex;align-items:flex-start;gap:10px;margin-top:6px;font-size:12px;color:var(--muted)}
+.usagebar span{flex:1}
+.usagebar .btn{padding:3px 10px;font-size:12.5px;flex:none}
 .cursor::after{content:"▍";animation:blink 1s steps(2) infinite;color:var(--accent)}
 @keyframes blink{50%{opacity:0}}
 @media (prefers-reduced-motion:reduce){.cursor::after{animation:none}aside{transition:none}}
@@ -361,6 +387,7 @@ dialog textarea{min-height:110px;resize:vertical}
 
 @media (max-width:760px){
   aside{position:fixed;z-index:10;inset:0 auto 0 0;box-shadow:4px 0 20px rgba(0,0,0,.3)}
+  #sideResize{display:none}
   #messages{padding:16px 14px 30px}.composer{padding:8px 10px 12px}
 }
 </style>
@@ -384,6 +411,8 @@ dialog textarea{min-height:110px;resize:vertical}
     <div id="appVersion" title="Datasquint version">Datasquint {{ version }}</div>
   </div>
 </aside>
+<div id="sideResize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"
+  title="Drag to resize the sidebar · double-click to reset"></div>
 
 <main>
   <header>
@@ -550,6 +579,9 @@ dialog textarea{min-height:110px;resize:vertical}
   <label class="check"><input type="checkbox" id="autoRun"> Run the model's SQL queries automatically</label>
   <div style="font-size:12px;color:var(--muted);margin-top:4px">Queries are always read-only. Auto-run stops after 5 queries in a row so you can check in.</div>
   <label class="check"><input type="checkbox" id="excelNote"> Remind me that Excel data may not be exact (CSV preferred)</label>
+  <label>Token usage <span id="usageSince"></span></label>
+  <div class="usagebox" id="usageBox"><div class="none">Loading…</div></div>
+  <div class="usagebar"><span id="usageNote"></span><button class="btn" id="usageReset" type="button">Reset counters</button></div>
   <div class="row">
     <button class="btn" id="cancelSettings">Cancel</button>
     <button class="btn primary" id="saveSettings">Save</button>
@@ -890,6 +922,11 @@ function msgEl(m, i){
   const copy = document.createElement("button"); copy.textContent = "Copy";
   copy.onclick = () => { navigator.clipboard.writeText(m.content); copy.textContent = "Copied"; setTimeout(()=>copy.textContent="Copy",1200); };
   tools.appendChild(copy);
+  if (m.usage && (m.usage.prompt || m.usage.completion)) { const tk = document.createElement("span"); tk.className = "tokens";
+    tk.textContent = `${m.usage.estimated ? "≈ " : ""}${fmtNum(m.usage.prompt)} in · ${fmtNum(m.usage.completion)} out`;
+    tk.title = "Tokens used for this reply: sent to the AI (in) and written by it (out)" + (m.parts > 1 ? ", over all parts" : "")
+      + (m.usage.estimated ? ".\nEstimated: the AI service didn't report usage." : ".");
+    tools.appendChild(tk); }
   if (m.parts > 1) { const pn = document.createElement("span"); pn.className = "partsnote";
     pn.textContent = `Read in ${m.parts} parts`; pn.title = "Too large for one request, so the files were read in parts and combined";
     tools.appendChild(pn); }
@@ -1000,6 +1037,7 @@ async function send(text, atts, c = cur()){
         if (ev.delta) { reply.content += ev.delta; job.status = ""; }
         if (ev.status) job.status = ev.status;
         if (ev.parts) reply.parts = ev.parts;
+        if (ev.usage) reply.usage = ev.usage;
         if (ev.error) { reply.content += (reply.content ? "\n\n" : "") + "**Request failed.** " + ev.error; reply.error = true; }
       }
       if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; paintLive(c); }); }
@@ -1514,6 +1552,46 @@ window.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#dr
 $("#send").onclick = submit;
 $("#newChat").onclick = newChat;
 $("#toggleSide").onclick = () => $("#sidebar").classList.toggle("hidden");
+
+/* Sidebar width: drag the handle between the sidebar and the chat (or focus it and use ←/→).
+   Double-click or Home resets it. Remembered per browser. */
+const SIDE_KEY = "datasquint.sidebarWidth", SIDE_DEFAULT = 260, SIDE_MIN = 180, SIDE_MAX = 520;
+const sideHandle = $("#sideResize");
+function sideMax(){ return Math.max(SIDE_MIN, Math.min(SIDE_MAX, Math.round(window.innerWidth * 0.5))); }
+function setSideWidth(w, keep = true){
+  w = Math.round(Math.min(sideMax(), Math.max(SIDE_MIN, +w || SIDE_DEFAULT)));
+  document.documentElement.style.setProperty("--side-w", w + "px");
+  sideHandle.setAttribute("aria-valuenow", w);
+  sideHandle.setAttribute("aria-valuemin", SIDE_MIN); sideHandle.setAttribute("aria-valuemax", sideMax());
+  if (keep) { try { localStorage.setItem(SIDE_KEY, String(w)); } catch {} }
+  return w;
+}
+function sideWidth(){ return $("#sidebar").getBoundingClientRect().width; }
+(() => { let saved = null; try { saved = localStorage.getItem(SIDE_KEY); } catch {} setSideWidth(saved || SIDE_DEFAULT, false); })();
+sideHandle.addEventListener("pointerdown", e => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const startX = e.clientX, startW = sideWidth();
+  sideHandle.setPointerCapture(e.pointerId);
+  document.body.classList.add("resizing");
+  const move = ev => setSideWidth(startW + ev.clientX - startX, false);
+  const up = ev => {
+    sideHandle.removeEventListener("pointermove", move); sideHandle.removeEventListener("pointerup", up); sideHandle.removeEventListener("pointercancel", up);
+    document.body.classList.remove("resizing");
+    setSideWidth(sideWidth());
+  };
+  sideHandle.addEventListener("pointermove", move); sideHandle.addEventListener("pointerup", up); sideHandle.addEventListener("pointercancel", up);
+});
+sideHandle.addEventListener("dblclick", () => setSideWidth(SIDE_DEFAULT));
+sideHandle.addEventListener("keydown", e => {
+  const step = e.shiftKey ? 64 : 16;
+  if (e.key === "ArrowLeft") setSideWidth(sideWidth() - step);
+  else if (e.key === "ArrowRight") setSideWidth(sideWidth() + step);
+  else if (e.key === "Home") setSideWidth(SIDE_DEFAULT);
+  else return;
+  e.preventDefault();
+});
+window.addEventListener("resize", () => { if (sideWidth() > sideMax()) setSideWidth(sideMax(), false); });
 $("#clearAll").onclick = () => { if (state.chats.length) deleteChats(state.chats.slice()); else notify("There are no chats to delete.", true); };
 $("#model").onchange = e => { state.model = e.target.value; save(); };
 
@@ -1745,6 +1823,7 @@ function cleanChat(c){
     if (m.error) out.error = true;
     if (Array.isArray(m.removed) && m.removed.length) out.removed = m.removed.slice(0, 50).map(n => String(n).slice(0, 200));
     if (+m.parts > 1) out.parts = +m.parts;
+    if (m.usage && typeof m.usage === "object") out.usage = { prompt: Math.max(0, +m.usage.prompt || 0), completion: Math.max(0, +m.usage.completion || 0), estimated: !!m.usage.estimated };
     messages.push(out);
   }
   if (!messages.length) return null;
@@ -2093,7 +2172,40 @@ let theme = loadTheme(), themeDraft = null;
 applyTheme(theme);
 document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, mode: b.dataset.mode }; applyTheme(themeDraft); });
 document.querySelectorAll("#accentPick .swatch").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, accent: b.dataset.accent }; applyTheme(themeDraft); });
-$("#openSettings").onclick = () => { themeDraft = { ...theme }; applyTheme(themeDraft); $("#sysPrompt").value = state.settings.system; $("#temp").value = state.settings.temperature; $("#autoRun").checked = !!state.settings.autoRun; $("#excelNote").checked = !state.settings.hideExcelNote; dlg.showModal(); };
+$("#openSettings").onclick = () => { themeDraft = { ...theme }; applyTheme(themeDraft); $("#sysPrompt").value = state.settings.system; $("#temp").value = state.settings.temperature; $("#autoRun").checked = !!state.settings.autoRun; $("#excelNote").checked = !state.settings.hideExcelNote; dlg.showModal(); loadUsage(); };
+function fmtNum(n){ return (+n || 0).toLocaleString(); }
+// Token usage: server-wide counters per model since the last reset, plus this chat's replies
+async function loadUsage(){
+  const box = $("#usageBox");
+  const u = await api("/api/usage");
+  if (u.error) { box.innerHTML = `<div class="none">${esc("Couldn't load token usage: " + u.error)}</div>`; $("#usageNote").textContent = ""; return; }
+  const since = u.since ? new Date(u.since) : null;
+  $("#usageSince").textContent = since && !isNaN(since) ? `(since ${since.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })})` : "";
+  if (!u.models.length) box.innerHTML = `<div class="none">No replies yet since the counters were reset.</div>`;
+  else {
+    const row = (name, m, cls = "") => `<tr class="${cls}"><td>${esc(name)}</td><td>${fmtNum(m.requests)}</td><td>${fmtNum(m.prompt)}</td><td>${fmtNum(m.completion)}</td><td>${fmtNum(m.total)}</td></tr>`;
+    box.innerHTML = `<table><thead><tr><th>Model</th><th title="Requests to the AI service">Requests</th><th title="Tokens sent to the AI">In</th><th title="Tokens written by the AI">Out</th><th>Total</th></tr></thead><tbody>`
+      + u.models.map(m => row(m.model, m)).join("") + (u.models.length > 1 ? row("All models", u.total, "sum") : "") + `</tbody></table>`;
+  }
+  const c = cur(), mine = (c?.messages || []).filter(m => m.usage);
+  const notes = [];
+  if (mine.length) {
+    const p = mine.reduce((a, m) => a + (m.usage.prompt || 0), 0), q = mine.reduce((a, m) => a + (m.usage.completion || 0), 0);
+    notes.push(`This chat: ${fmtNum(p)} in · ${fmtNum(q)} out.`);
+  }
+  if (u.total.estimated_requests) notes.push(`${fmtNum(u.total.estimated_requests)} of ${fmtNum(u.total.requests)} requests are estimated (≈4 characters per token) because the AI service didn't report usage.`);
+  notes.push("Counted on the server, for everyone using it.");
+  $("#usageNote").textContent = notes.join(" ");
+  $("#usageReset").disabled = !u.models.length;
+}
+$("#usageReset").onclick = async () => {
+  const r = await ask({ title: "Reset token counters?", ok: "Reset",
+    body: "All token counts on the server go back to zero, for everyone using this Datasquint. The numbers shown under each reply are kept." });
+  if (!r.ok) return;
+  const u = await api("/api/usage/reset", { method: "POST" });
+  if (u.error) { notify("Couldn't reset the counters: " + u.error, true); return; }
+  notify("Token counters reset."); loadUsage();
+};
 // Cancel, Esc or clicking away undoes a previewed theme; Save keeps it
 dlg.addEventListener("close", () => { if (themeDraft) { applyTheme(theme); themeDraft = null; } });
 $("#cancelSettings").onclick = () => dlg.close();

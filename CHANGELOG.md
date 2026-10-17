@@ -8,6 +8,13 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.11.0 — 2026-10-17
+
+### Added
+- **Token counters.** Each answer shows the tokens it used (*in · out*, over all requests when files are read in parts). **Settings → Token usage** shows totals per model since the last reset, plus the current chat's total, with **Reset counters**. Counts come from the AI service's usage report (`stream_options.include_usage` on streamed replies); services that reject the option are detected once, and services that don't report usage are estimated (≈4 characters per token, marked ≈ and counted separately). Stopped answers count what they used. Kept on the server in `usage.json` (`USAGE_FILE`), shared by everyone using it.
+- `GET /api/usage`, `POST /api/usage/reset`; `{"usage": …}` event in the `/api/chat` stream; the token count is added to each reply's log line.
+- Settings: `USAGE_FILE`, `STREAM_USAGE` (`auto`/`off`).
+
 ## 2.10.1 — 2026-10-16
 
 ### Changed

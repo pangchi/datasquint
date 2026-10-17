@@ -45,6 +45,7 @@ LOG_PATH = logsetup.setup()   # before the other modules log anything
 import db
 import filesql
 import scriptgen
+import usage
 from version import __version__ as VERSION
 log = logsetup.child("web")
 ulog = logsetup.child("upload")
@@ -791,20 +792,52 @@ def ndjson(obj):
     return json.dumps(obj) + "\n"
 
 
-def stream_completion(model, messages, temperature):
-    stream = client.chat.completions.create(model=model, messages=messages, temperature=temperature, stream=True)
-    for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield ndjson({"delta": chunk.choices[0].delta.content})
+# Ask streaming replies to report their token usage (OpenAI's stream_options). Servers that reject the option
+# are asked once, then no more; their usage is estimated instead. STREAM_USAGE=off never asks.
+_stream_usage = os.getenv("STREAM_USAGE", "auto").strip().lower() != "off"
 
 
-def complete(model, messages, temperature):
+def stream_completion(model, messages, temperature, tally):
+    global _stream_usage
+    extra = {"stream_options": {"include_usage": True}} if _stream_usage else {}
+    try:
+        stream = client.chat.completions.create(model=model, messages=messages, temperature=temperature,
+                                                stream=True, **extra)
+    except openai.BadRequestError as e:
+        if not extra or not re.search(r"stream_options|include_usage", str(e), re.I):
+            raise
+        _stream_usage = False
+        clog.info("%s doesn't accept stream_options; token usage will be estimated", BASE_URL)
+        stream = client.chat.completions.create(model=model, messages=messages, temperature=temperature, stream=True)
+    out_chars, reported = 0, None
+    try:
+        for chunk in stream:
+            if getattr(chunk, "usage", None):
+                reported = chunk.usage
+            if chunk.choices and chunk.choices[0].delta.content:
+                text = chunk.choices[0].delta.content
+                out_chars += len(text)
+                yield ndjson({"delta": text})
+    finally:   # also when the user stops the reply: count what was used so far
+        if reported and (reported.prompt_tokens or reported.completion_tokens):
+            tally.add(model, reported.prompt_tokens or 0, reported.completion_tokens or 0, False)
+        elif out_chars:
+            tally.add(model, usage.estimate(char_len(messages)), usage.estimate(out_chars), True)
+
+
+def complete(model, messages, temperature, tally):
     r = client.chat.completions.create(model=model, messages=messages, temperature=temperature,
                                        max_tokens=PART_NOTE_TOKENS)
-    return (r.choices[0].message.content or "").strip()
+    text = (r.choices[0].message.content or "").strip()
+    u = getattr(r, "usage", None)
+    if u and (u.prompt_tokens or u.completion_tokens):
+        tally.add(model, u.prompt_tokens or 0, u.completion_tokens or 0, False)
+    else:
+        tally.add(model, usage.estimate(char_len(messages)), usage.estimate(len(text)), True)
+    return text
 
 
-def split_send(model, raw, system, temperature, ftables=None):
+def split_send(model, raw, system, temperature, tally, ftables=None):
     """Answer a request that exceeds MAX_SEND_CHARS by reading the files in parts.
 
     Each part is a separate request under the limit; notes from all parts are then
@@ -842,7 +875,7 @@ def split_send(model, raw, system, temperature, ftables=None):
         yield ndjson({"status": f"Reading part {k} of {n}…"})
         prompt = PART_PROMPT.format(n=n, k=k, chunk=chunk, question=question)
         notes.append(f"[Notes from part {k} of {n}]\n" + complete(model, sys_msgs + history + [
-            {"role": "user", "content": prompt}], temperature))
+            {"role": "user", "content": prompt}], temperature, tally))
 
     final_overhead = len(system) + char_len(history) + len(question) + len(FINAL_PROMPT) + 100
     rounds = 0
@@ -857,14 +890,14 @@ def split_send(model, raw, system, temperature, ftables=None):
         for g, group in enumerate(groups, 1):
             yield ndjson({"status": f"Combining notes ({g} of {len(groups)})…"})
             merged.append(complete(model, sys_msgs + [{"role": "user", "content": MERGE_PROMPT.format(
-                question=question, notes=group)}], temperature))
+                question=question, notes=group)}], temperature, tally))
         notes = merged
 
     yield ndjson({"status": "Writing answer…"})
     final = FINAL_PROMPT.format(n=n, notes="\n\n".join(notes), question=question,
                                 img=" and the attached images" if images else "")
     yield from stream_completion(model, sys_msgs + history + [
-        {"role": "user", "content": with_images(final, images)}], temperature)
+        {"role": "user", "content": with_images(final, images)}], temperature, tally)
 
 
 # ---------------------------------------------------------------- PostgreSQL
@@ -1146,11 +1179,24 @@ def recent_logs():
     return Response("\n".join(logsetup.tail(n)) + "\n", mimetype="text/plain")
 
 
+@app.get("/api/usage")
+def usage_get():
+    """Token counters: totals and per model, since the last reset."""
+    return jsonify(usage.summary())
+
+
+@app.post("/api/usage/reset")
+def usage_reset():
+    clog.info("Token usage counters reset from %s", request.remote_addr)
+    return jsonify(usage.reset())
+
+
 @app.post("/api/chat")
 def chat():
     """Stream a completion back as newline-delimited JSON.
 
-    Events: {"delta": text}, {"status": text}, {"parts": n}, {"done": true}, {"error": text}.
+    Events: {"delta": text}, {"status": text}, {"parts": n}, {"usage": {prompt, completion, estimated}},
+    {"done": true}, {"error": text}.
     """
     data = request.get_json(force=True)
     raw = data.get("messages", [])
@@ -1177,13 +1223,16 @@ def chat():
 
     def generate():
         t0, size = time.time(), char_len(messages)
+        tally = usage.Tally()
         try:
             if size <= MAX_SEND_CHARS:
-                yield from stream_completion(model, messages, temperature)
+                yield from stream_completion(model, messages, temperature, tally)
             else:
-                yield from split_send(model, raw, system, temperature, ftables)
+                yield from split_send(model, raw, system, temperature, tally, ftables)
+            yield ndjson({"usage": tally.as_dict()})
             yield ndjson({"done": True})
-            clog.info("Reply from %s: %s chars sent, %.1f s", model, f"{size:,}", time.time() - t0)
+            clog.info("Reply from %s: %s chars sent, %.1f s, tokens %s in / %s out%s", model, f"{size:,}", time.time() - t0,
+                      f"{tally.prompt:,}", f"{tally.completion:,}", " (estimated)" if tally.estimated else "")
         except GeneratorExit:   # the user pressed Stop or closed the page
             clog.info("Reply from %s stopped by the user after %.1f s", model, time.time() - t0)
             raise
