@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.11.0** · [Changelog](CHANGELOG.md)
+**Version 2.12.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -426,6 +426,7 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `LOG_FILE` | `./logs/datasquint.log` | Error log file (see [Error log](#error-log)) |
 | `LOG_LEVEL` | `INFO` | `ERROR`, `WARNING`, `INFO` (adds one line per upload, query and reply) or `DEBUG` |
 | `LOG_MAX_MB` / `LOG_BACKUPS` | `10` / `5` | Rotate the log at this size, keeping this many old files |
+| `UPDATES` | `on` | Updates from GitHub: `on`, `check` (tell only) or `off`; also `UPDATE_REPO`, `UPDATE_BRANCH` (see [Versions and updating](#versions-and-updating)) |
 | `USAGE_FILE` | `./usage.json` | Where the token counters are kept (see Token usage under [Quick start](#quick-start)) |
 | `STREAM_USAGE` | `auto` | `auto` asks the AI service to report token usage on streamed replies, and stops asking if it rejects the option; `off` never asks (usage is then estimated) |
 | `FLASK_DEBUG` | `0` | `1` turns on Flask's debug mode (auto-reload on code changes, in-browser debugger) for development only. Never combine it with `HOST=0.0.0.0`: the debugger can run code. |
@@ -501,6 +502,7 @@ CHANGELOG.md         What changed in each version
 version.py           The version number (single place to change it)
 logsetup.py          Error log: rotating file, secret masking, request details
 usage.py             Token counters per model (usage.json), with reset
+updater.py           Checks GitHub for a newer version and installs it (Settings → Updates)
 recalc.py            Calculates Excel formulas saved without results (Excel, LibreOffice or pycel)
 requirements.txt
 env.example          Settings template: copy it to .env and fill it in
@@ -545,6 +547,8 @@ All responses are JSON unless noted.
 - `POST /api/log` — `{kind, message, source?, line?, stack?}` from the page (JavaScript errors and error messages shown to the user) into the server log; at most 30 a minute per client
 - `GET /api/usage` — token counters since the last reset: `{since, total: {requests, prompt, completion, total, estimated_requests}, models: [{model, …same fields}]}`
 - `POST /api/usage/reset` — sets the counters to zero; returns the same shape
+- `GET /api/update[?refresh=1]` — `{mode, current, latest, available, checked_at, error, notes, repo, branch, url, method: git|zip, can_install, restart: auto|manual, busy}`; the check is cached for 6 hours unless `refresh=1`
+- `POST /api/update/install` — JSON request only (415 otherwise); installs the latest version and returns `{ok, from, to, method, backup, files, pip, restart}`, then restarts when `restart` is `auto`. 403 when `UPDATES` isn't `on`, 400 with `{error}` if it can't.
 - `GET /api/logs?lines=200` — the end of the log as text; only from the server itself (403 otherwise)
 - `POST /api/script` — `{title, queries: [{sql, title?}], dbs, files}`; returns a `text/x-python` attachment with header `X-Queries` (queries included), or `{error}` with 400 when none can be resolved.
 - `POST /api/db/export` — same body as `/api/db/query`; returns the full result as `text/csv` (UTF-8 with BOM), up to `DB_EXPORT_MAX_ROWS`, with headers `X-Row-Count`, `X-Truncated` (`1` if cut off) and `X-Max-Rows`; `{error}` with 400 on failure
@@ -564,10 +568,26 @@ Datasquint uses `MAJOR.MINOR.PATCH` version numbers: PATCH for fixes, MINOR for 
 
 **Which version am I running?** It's at the bottom of the sidebar and on the Help page, printed when the server starts (` * Datasquint <version>`), and returned by `/api/version`. Chat exports record the version that made them (`app_version` in JSON, the header line in HTML).
 
-**Updating**:
+**Updating from GitHub (built in, on by default)**: Datasquint checks [github.com/pangchi/datasquint](https://github.com/pangchi/datasquint) (branch `main`) at startup and then at most every 6 hours while the page is opened. When a newer version is there, the sidebar shows **Update available: x.y.z** under the version number, and **Settings → Updates** shows what's new (from the CHANGELOG) with an **Update to x.y.z** button. **Check now** checks straight away. Installing:
+
+1. Asks you to confirm, then downloads the new version. In a git checkout (a `.git` folder next to `app.py`) it runs `git pull --ff-only` instead; that stops with a message if you've changed files yourself.
+2. Copies the code over the current folder. It never touches `.env`, `secret.key`, `connections.sqlite`, `ssh_known_hosts`, `usage.json`, `uploads/`, `logs/` or `backups/`, even if the download contains files with those names. Files it replaces are first copied to `backups/<old version>-<date-time>/`; to roll back, copy them back and restart. Files that were removed upstream are left in place.
+3. Runs `pip install -r requirements.txt` with the same Python if `requirements.txt` changed. If that fails, the page says so; run it yourself.
+4. Restarts Datasquint when it was started with `python app.py`, and the page reloads itself once the new version answers. Under gunicorn or a service manager it asks you to restart the service. A restart cuts off replies in progress for everyone using that server.
+
+Only versions newer than the running one are installed. The check sends one request to GitHub for `version.py` (and `CHANGELOG.md` when there's an update); nothing about your data is sent. It goes through `HTTPS_PROXY` if set.
+
+| Setting | Default | Notes |
+|---|---|---|
+| `UPDATES` | `on` | `on`: check and allow installing from the app. `check`: only say when an update is available (install by hand); a good choice for a shared server, since anyone who can open Settings can otherwise install updates. `off`: never contact GitHub. |
+| `UPDATE_REPO` | `pangchi/datasquint` | GitHub `owner/repo` to follow, e.g. your own fork |
+| `UPDATE_BRANCH` | `main` | Branch to follow |
+| `UPDATE_RAW_URL` / `UPDATE_ZIP_URL` | GitHub's | URL templates (`{repo}`, `{branch}`, `{path}`) for a mirror or GitHub Enterprise |
+
+**Updating by hand**:
 
 1. Check [CHANGELOG.md](CHANGELOG.md) for anything marked as needing action.
-2. Stop Datasquint, then unzip the new `datasquint-<version>.zip` over your `datasquint` folder. Your `.env`, `connections.sqlite`, `secret.key`, `ssh_known_hosts` and `uploads/` aren't in the zip, so they're kept.
+2. Stop Datasquint, then unzip the new `datasquint-<version>.zip` over your `datasquint` folder (or `git pull` in a clone). Your `.env`, `connections.sqlite`, `secret.key`, `ssh_known_hosts`, `usage.json` and `uploads/` aren't in the zip, so they're kept.
 3. Run `pip install -r requirements.txt` in case dependencies changed.
 4. Start Datasquint again, and reload the page in the browser. A running server keeps serving the old page until it's restarted.
 

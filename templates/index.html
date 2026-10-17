@@ -151,6 +151,21 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:6px;paddi
 .usagebar{display:flex;align-items:flex-start;gap:10px;margin-top:6px;font-size:12px;color:var(--muted)}
 .usagebar span{flex:1}
 .usagebar .btn{padding:3px 10px;font-size:12.5px;flex:none}
+/* updates */
+.updbox{border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:13px}
+.updbox.avail{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.updbox b{font-weight:600}
+.updbox details{margin-top:6px}
+.updbox summary{cursor:pointer;color:var(--accent);font-size:12.5px}
+.updmd{font-size:12.5px;line-height:1.5;max-height:200px;overflow:auto;margin:6px 0 0;padding:4px 10px;background:var(--bg);border-radius:6px}
+.updmd h2{font-size:13.5px;margin:8px 0 2px}.updmd h3{font-size:12.5px;margin:6px 0 2px;color:var(--muted)}
+.updmd ul{margin:2px 0;padding-left:18px}.updmd p{margin:4px 0}.updmd code{font-size:11.5px}
+.updbox .err{color:var(--danger)}
+.updbar{display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12px;color:var(--muted)}
+.updbar span{flex:1}
+.updbar .btn{padding:3px 10px;font-size:12.5px;flex:none}
+#updLink{display:block;background:none;border:0;padding:2px 10px 0;margin:0;font-size:11px;color:var(--side-ink);cursor:pointer;text-align:left;text-decoration:underline;opacity:.9}
+#updLink[hidden]{display:none}
 .cursor::after{content:"▍";animation:blink 1s steps(2) infinite;color:var(--accent)}
 @keyframes blink{50%{opacity:0}}
 @media (prefers-reduced-motion:reduce){.cursor::after{animation:none}aside{transition:none}}
@@ -409,6 +424,7 @@ dialog textarea{min-height:110px;resize:vertical}
     <button id="openSettings"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg> Settings</button>
     <a id="helpLink" href="/guide" target="_blank" rel="noopener"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01"/></svg> Help</a>
     <div id="appVersion" title="Datasquint version">Datasquint {{ version }}</div>
+    <button id="updLink" type="button" hidden>Update available</button>
   </div>
 </aside>
 <div id="sideResize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" tabindex="0"
@@ -579,6 +595,14 @@ dialog textarea{min-height:110px;resize:vertical}
   <label class="check"><input type="checkbox" id="autoRun"> Run the model's SQL queries automatically</label>
   <div style="font-size:12px;color:var(--muted);margin-top:4px">Queries are always read-only. Auto-run stops after 5 queries in a row so you can check in.</div>
   <label class="check"><input type="checkbox" id="excelNote"> Remind me that Excel data may not be exact (CSV preferred)</label>
+  <div id="updWrap" hidden>
+    <label>Updates</label>
+    <div class="updbox" id="updBox">
+      <div id="updLine">Checking…</div>
+      <details id="updNotes" hidden><summary>What's new</summary><div class="updmd"></div></details>
+      <div class="updbar"><span id="updNote"></span><button class="btn" id="updCheck" type="button">Check now</button><button class="btn primary" id="updInstall" type="button" hidden>Update</button></div>
+    </div>
+  </div>
   <label>Token usage <span id="usageSince"></span></label>
   <div class="usagebox" id="usageBox"><div class="none">Loading…</div></div>
   <div class="usagebar"><span id="usageNote"></span><button class="btn" id="usageReset" type="button">Reset counters</button></div>
@@ -2172,7 +2196,75 @@ let theme = loadTheme(), themeDraft = null;
 applyTheme(theme);
 document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, mode: b.dataset.mode }; applyTheme(themeDraft); });
 document.querySelectorAll("#accentPick .swatch").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, accent: b.dataset.accent }; applyTheme(themeDraft); });
-$("#openSettings").onclick = () => { themeDraft = { ...theme }; applyTheme(themeDraft); $("#sysPrompt").value = state.settings.system; $("#temp").value = state.settings.temperature; $("#autoRun").checked = !!state.settings.autoRun; $("#excelNote").checked = !state.settings.hideExcelNote; dlg.showModal(); loadUsage(); };
+$("#openSettings").onclick = () => { themeDraft = { ...theme }; applyTheme(themeDraft); $("#sysPrompt").value = state.settings.system; $("#temp").value = state.settings.temperature; $("#autoRun").checked = !!state.settings.autoRun; $("#excelNote").checked = !state.settings.hideExcelNote; dlg.showModal(); loadUsage(); loadUpdate(); };
+/* Updates from GitHub (UPDATES in .env: on, check or off) */
+let upd = null;
+function showUpdate(u){
+  upd = u;
+  const on = !!u && u.mode !== "off";
+  $("#updWrap").hidden = !on;
+  $("#updLink").hidden = !(on && u.available);
+  if (on && u.available) $("#updLink").textContent = `Update available: ${u.latest}`;
+  if (!on) return;
+  const box = $("#updBox"), line = $("#updLine");
+  box.classList.toggle("avail", !!u.available);
+  const when = u.checked_at ? new Date(u.checked_at * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "";
+  if (u.error) line.innerHTML = `Running <b>${esc(u.current)}</b>. <span class="err">${esc(u.error)}</span>`;
+  else if (u.available) line.innerHTML = `<b>Datasquint ${esc(u.latest)}</b> is available. You're running ${esc(u.current)}.`;
+  else if (u.latest) line.innerHTML = `Datasquint <b>${esc(u.current)}</b> is the latest version.`;
+  else line.textContent = `Running ${u.current}. Checking GitHub…`;
+  const notes = $("#updNotes");
+  notes.hidden = !(u.available && u.notes); notes.querySelector(".updmd").innerHTML = u.notes ? md(u.notes) : "";
+  const src = `${u.repo} (${u.branch})`;
+  $("#updNote").textContent = u.available && u.mode === "check"
+    ? `From ${src}. Installing from the app is off (UPDATES=check); update by hand.`
+    : (when ? `Checked ${when} · ${src}` : src);
+  const inst = $("#updInstall");
+  inst.hidden = !(u.available && u.can_install);
+  inst.textContent = `Update to ${u.latest}`;
+  inst.disabled = !!u.busy;
+}
+async function loadUpdate(refresh){
+  if (upd && upd.mode === "off") return;
+  if (refresh) { $("#updCheck").disabled = true; $("#updLine").textContent = "Checking GitHub…"; }
+  const u = await api("/api/update" + (refresh ? "?refresh=1" : ""));
+  $("#updCheck").disabled = false;
+  if (u.error && !u.mode) { showUpdate({ mode: "on", current: APP_VERSION, error: u.error, repo: "", branch: "" }); return; }
+  showUpdate(u);
+}
+$("#updCheck").onclick = () => loadUpdate(true);
+$("#updLink").onclick = () => { $("#openSettings").click(); setTimeout(() => $("#updWrap").scrollIntoView({ block: "center" }), 50); };
+$("#updInstall").onclick = async () => {
+  if (!upd?.available) return;
+  if (jobs.size) { notify("Wait for the replies in progress to finish first.", true); return; }
+  const r = await ask({ title: `Update Datasquint to ${upd.latest}?`, ok: "Update",
+    body: `Downloads version ${upd.latest} from github.com/${upd.repo} (${upd.branch}) and installs it here. `
+      + "Your settings (.env), saved connections, uploaded files, token counts and chats are kept, and the current code is backed up first. "
+      + (upd.restart === "auto" ? "Datasquint then restarts, which cuts off replies in progress for anyone using it." : "You'll need to restart Datasquint afterwards.") });
+  if (!r.ok) return;
+  const btn = $("#updInstall"); btn.disabled = true; btn.textContent = "Updating…";
+  $("#updLine").textContent = `Installing ${upd.latest}…`;
+  const res = await api("/api/update/install", { method: "POST" });
+  if (res.error) { notify("Update failed: " + res.error, true); loadUpdate(true); return; }
+  const pipNote = res.pip && !res.pip.ok ? " " + res.pip.message : "";
+  if (res.restart !== "auto") {
+    $("#updLine").innerHTML = `<b>Updated to ${esc(res.to)}.</b> Restart Datasquint to start using it.${esc(pipNote)}`;
+    btn.hidden = true; $("#updLink").hidden = true;
+    notify(`Updated to ${res.to}. Restart Datasquint to use it.${pipNote}`, !!pipNote);
+    return;
+  }
+  $("#updLine").innerHTML = `<b>Updated to ${esc(res.to)}.</b> Restarting…${esc(pipNote)}`;
+  notify(`Updated to ${res.to}. Restarting…`);
+  // wait for the restarted server, then reload the page so it uses the new version
+  const t0 = Date.now();
+  const poll = async () => {
+    const v = await fetch("/api/version", { cache: "no-store" }).then(x => x.json()).catch(() => null);
+    if (v?.version === res.to) { location.reload(); return; }
+    if (Date.now() - t0 > 90000) { $("#updLine").innerHTML = `<b>Updated to ${esc(res.to)}</b>, but Datasquint didn't come back. Start it again by hand.`; return; }
+    setTimeout(poll, 1000);
+  };
+  setTimeout(poll, 1500);
+};
 function fmtNum(n){ return (+n || 0).toLocaleString(); }
 // Token usage: server-wide counters per model since the last reset, plus this chat's replies
 async function loadUsage(){
@@ -2239,6 +2331,7 @@ $("#saveSettings").onclick = () => {
   if (!state.current && state.chats.length) state.current = state.chats[0].id;
   await loadConnections();
   render(); input.focus();
+  api("/api/update").then(u => { if (!u.error || u.mode) showUpdate(u); });
   const used = [...new Set(state.chats.flatMap(c => chatDbs(c)))];
   if (used.length) checkStatus(used);
 })();

@@ -217,6 +217,8 @@ Usually your administrator sets these up. To add one yourself: **Database → + 
 | Run SQL automatically | Runs the AI's queries without pressing **Run**. It stops after 5 queries in a row so a confused AI can't loop. |
 | Token usage | How many tokens the AI has used since the last reset, per model: *in* is what was sent to the AI, *out* is what it wrote. Also shows this chat's total. **Reset counters** starts again from zero. The counts are for everyone using this Datasquint, not just you. |
 
+**Updates.** When a newer Datasquint is out, *Update available* appears under the version number at the bottom of the sidebar. Click it (or open **Settings → Updates**) to see what's new and press **Update**. Your settings, connections, files, token counts and chats are kept. Datasquint restarts and the page reloads by itself. On a shared server your administrator may have turned this off, in which case it only tells you an update exists.
+
 Each answer also shows its own tokens under it, such as *321 in · 33 out*. A **≈** means the AI service didn't report the numbers, so they're estimated.
 
 Appearance and colour are remembered in this browser only, so each person (and each browser) can pick their own.

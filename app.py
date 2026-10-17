@@ -40,11 +40,19 @@ import posixpath
 
 import openai
 
+# Read .env first: the modules below read their settings (LOG_*, FILE_TABLES, UPDATES, …) when imported.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass
+
 import logsetup
 LOG_PATH = logsetup.setup()   # before the other modules log anything
 import db
 import filesql
 import scriptgen
+import updater
 import usage
 from version import __version__ as VERSION
 log = logsetup.child("web")
@@ -53,12 +61,6 @@ qlog = logsetup.child("query")
 clog = logsetup.child("chat")
 from flask import Flask, Response, abort, jsonify, render_template, request, send_from_directory, stream_with_context
 from werkzeug.utils import secure_filename
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
 
 API_KEY = os.getenv("OPENAI_API_KEY", "your_api_key")
 BASE_URL = os.getenv("OPENAI_BASE_URL", "https://example.com")
@@ -767,6 +769,32 @@ def version():
     return jsonify(name="Datasquint", version=VERSION)
 
 
+@app.get("/api/update")
+def update_status():
+    """Running and latest version on GitHub (?refresh=1 checks again now)."""
+    if updater.MODE == "off":
+        return jsonify(updater.status())
+    return jsonify(updater.check(force=request.args.get("refresh") == "1"))
+
+
+@app.post("/api/update/install")
+def update_install():
+    # Only from Datasquint's own page: other websites can't send a JSON request here without the browser asking first
+    if not request.is_json:
+        return jsonify(error="Send this request as JSON (Content-Type: application/json)."), 415
+    log.info("Update requested from %s", request.remote_addr)
+    try:
+        result = updater.install()
+    except PermissionError as e:
+        return _err(e, 403)
+    except Exception as e:
+        log.warning("Update failed: %s", e)
+        return _err(e, 400)
+    if result["restart"] == "auto":
+        updater.restart_soon()
+    return jsonify(result)
+
+
 @app.get("/api/config")
 def config():
     return jsonify(version=VERSION, default_model=DEFAULT_MODEL, system_prompt=SYSTEM_PROMPT, base_url=BASE_URL,
@@ -1187,6 +1215,8 @@ def usage_get():
 
 @app.post("/api/usage/reset")
 def usage_reset():
+    if not request.is_json:
+        return jsonify(error="Send this request as JSON (Content-Type: application/json)."), 415
     clog.info("Token usage counters reset from %s", request.remote_addr)
     return jsonify(usage.reset())
 
@@ -1259,17 +1289,25 @@ if __name__ == "__main__":
     if not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
         sys.exit(f"PORT={port_text!r} in .env isn't a valid port number. Use a number from 1 to 65535, e.g. PORT=8080.")
     port = int(port_text)
-    # Fail early with a clear message if something else already uses the port
+    # Fail early with a clear message if something else already uses the port. Right after an update the
+    # old process may still be letting go of it, so keep trying for a while then.
     import socket
-    with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as probe:
-        if os.name != "nt":   # like the web server itself: ignore connections still closing from a restart
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            probe.bind((host, port))
-        except OSError as e:
-            sys.exit(f"Can't use port {port} on {host}: {e.strerror or e}. Another program (or another Datasquint) "
-                     f"may be using it. Set a different PORT in .env, e.g. PORT={port + 1}.")
-    print(f" * Datasquint {VERSION}")
+    tries = 30 if os.getenv("DATASQUINT_RESTARTED") == "1" else 1
+    for attempt in range(tries):
+        with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as probe:
+            if os.name != "nt":   # like the web server itself: ignore connections still closing from a restart
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind((host, port))
+                break
+            except OSError as e:
+                if attempt + 1 < tries:
+                    time.sleep(0.5)
+                    continue
+                sys.exit(f"Can't use port {port} on {host}: {e.strerror or e}. Another program (or another Datasquint) "
+                         f"may be using it. Set a different PORT in .env, e.g. PORT={port + 1}.")
+    updater.SELF_RESTART = not debug   # in debug mode Flask's reloader picks up the new code by itself
+    print(f" * Datasquint {VERSION}" + (" (restarted after update)" if os.getenv("DATASQUINT_RESTARTED") == "1" else ""))
     print(f" * SQL over CSV/TSV/Excel files: {filesql.status()}"
           + (f", up to {MAX_TABLE_UPLOAD_MB} MB per file" if filesql.available() else f"; those files are read as text, up to {MAX_UPLOAD_MB} MB"))
     shown = "localhost" if host in ("127.0.0.1", "localhost") else ("<this computer's address>" if host in ("0.0.0.0", "::") else host)
@@ -1278,6 +1316,10 @@ if __name__ == "__main__":
           else f"calculated with {recalc.available()}"))
     print(f" * Open http://{shown}:{port} in your browser")
     print(f" * Error log: {LOG_PATH or 'console only (the log file could not be opened)'}")
+    print(" * Updates from GitHub: " + {"on": f"on ({updater.REPO}, {updater.BRANCH}); install from Settings → Updates",
+                                        "check": f"check only ({updater.REPO}, {updater.BRANCH})",
+                                        "off": "off (UPDATES=off)"}[updater.MODE])
+    updater.check_in_background()
     log.info("Datasquint %s starting on %s:%s (SQL over files: %s)", VERSION, host, port, filesql.status())
     app.run(host=host, port=port, debug=debug, threaded=True,
             # watchdog matches patterns per path segment, so list each depth under uploads/

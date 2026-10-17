@@ -8,6 +8,15 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.12.0 — 2026-10-17
+
+### Added
+- **Updates from GitHub**, on by default. Datasquint checks `pangchi/datasquint` (`main`) at startup and every 6 hours; the sidebar says when an update is available, and **Settings → Updates** shows what's new and installs it: `git pull --ff-only` in a git checkout, otherwise download and copy over, keeping `.env`, secrets, connections, uploads, logs and token counts, with the replaced files backed up in `backups/`. Runs `pip install -r requirements.txt` if it changed, then restarts itself when started with `python app.py` (otherwise asks for a restart) and the page reloads. Settings: `UPDATES` (`on`/`check`/`off`), `UPDATE_REPO`, `UPDATE_BRANCH`, `UPDATE_RAW_URL`, `UPDATE_ZIP_URL`. API: `GET /api/update`, `POST /api/update/install`.
+
+### Fixed
+- **Settings in `.env` that were read when Datasquint loads were ignored** unless also set as environment variables: `LOG_FILE`, `LOG_LEVEL`, `LOG_MAX_MB`, `LOG_BACKUPS`, `FILE_TABLES`, `SPLIT_TABLES`, `EXCEL_RECALC` and the other file-table and formula settings, `USAGE_FILE`, and several database/SSH settings. `.env` is now read first, from the folder `app.py` is in, so it also works when Datasquint is started from another folder.
+- `POST /api/usage/reset` (and the new install route) only accept JSON requests, so another website can't trigger them through your browser.
+
 ## 2.11.0 — 2026-10-17
 
 ### Added
