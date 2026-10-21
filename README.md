@@ -1,11 +1,12 @@
 # Datasquint
 
-**Version 2.12.0** · [Changelog](CHANGELOG.md)
+**Version 2.15.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
 - **Databases**: save any number of PostgreSQL connections, direct or through SSH, and choose which ones each chat can use. Queries are strictly read-only.
 - **Files**: images, PDF, Word, Excel, CSV, JSON, text, code and zip archives. Attached CSV, TSV and Excel files become SQL tables, so totals and comparisons are computed exactly, not estimated.
+- **Web pages**: turn on **Browser** and the model reads the page open in Microsoft Edge or Google Chrome, clicks through to get more (all pages of a report, detail views, "Show more"), and saves tables it finds as CSV files that become SQL tables.
 - **Any model**: OpenAI, Azure OpenAI proxies, vLLM, Ollama, LM Studio, LiteLLM, OpenRouter and others. No tool/function-calling support needed.
 - **Big inputs**: requests larger than a set size are split into parts automatically and combined into one answer.
 - **Keep your chats**: chats are saved in your browser between sessions; export them as JSON backups to move or restore, or as a standalone HTML page to read, print or share.
@@ -21,6 +22,7 @@ Ask questions about your PostgreSQL databases and your CSV and Excel files in pl
 - [Attaching files](#attaching-files)
 - [Querying CSV and Excel files](#querying-csv-and-excel-files)
 - [Browsing tables](#browsing-tables)
+- [Reading web pages](#reading-web-pages)
 - [Python scripts for offline use](#python-scripts-for-offline-use)
 - [Removing files and freeing space](#removing-files-and-freeing-space)
 - [Large requests](#large-requests)
@@ -268,6 +270,43 @@ If a file still can't become a table, it's read as text instead (under the 20 MB
 - It's read-only like everything else: each page is a `SELECT … LIMIT … OFFSET …` built from validated table and column names and run through the same checks, timeout and row cap as the model's queries. Nothing is sent to the AI.
 - **Refresh** reloads the list after the database has changed. Database table lists are cached for `SCHEMA_CACHE_SECS`.
 
+## Reading web pages
+
+Turn on **Browser** in the header (per chat, remembered for new chats) and the model can read and use a Microsoft Edge or Google Chrome window, driven by Selenium. It works well for internal web pages that have no database you can reach: MES and traceability screens, equipment HMIs, report portals, dashboards.
+
+It's on by default; `BROWSER_ENABLED=0` in `.env` turns it off for everyone on the server.
+
+**Set up:** `pip install selenium` (in `requirements.txt`) and Microsoft Edge or Google Chrome. Online, Selenium downloads the matching driver itself. Offline, on a connected PC download the driver that matches your browser's version, copy it over, and point the setting at it:
+
+| Browser | Driver | Version page | Setting |
+|---|---|---|---|
+| Edge | `msedgedriver` | `edge://version` | `EDGE_DRIVER=C:\path\msedgedriver.exe` |
+| Chrome | `chromedriver` | `chrome://version` | `CHROME_DRIVER=C:\path\chromedriver.exe` |
+
+**Use:** open the **Browser** menu, tick *Use the browser in this chat*, pick **Edge** or **Chrome**, and press **Start** (or type a URL and **Go**). The pick is remembered in your browser; `BROWSER=edge|chrome` sets the default. Log in to your site in the browser window yourself: the model never types passwords. Each browser uses the app's own profile, so logins persist between runs: `PROFILE_DIR` (Edge, default `./edge-profile`) and `CHROME_PROFILE_DIR` (Chrome, default `./chrome-profile`). They can't share one. Only one browser is open at a time; close it to switch.
+
+To use a browser you started yourself, start it with `--remote-debugging-port`, e.g. `msedge.exe --remote-debugging-port=9222 --user-data-dir=C:\edge-debug` or `chrome.exe --remote-debugging-port=9223 --user-data-dir=C:\chrome-debug`, and set `EDGE_DEBUGGER=127.0.0.1:9222` or `CHROME_DEBUGGER=127.0.0.1:9223`. The **Start** button then reads **Attach to …**, and closing leaves your window open.
+
+**How it works.** While Browser is on, every request includes the page open now as text, with clickable elements numbered (`[8:link Next]`) and tables shown with their first rows (`<<table 0: 240 rows x 6 cols>>`). Questions about what's on screen are answered directly. To get more, the model writes an action block, much as it writes SQL:
+
+````
+```action
+{"action": "paginate", "table": 0, "next": "Next", "save_as": "lots"}
+```
+````
+
+- Actions that only **read** (`snapshot`, `extract_table`, `extract_text`, `find`, `scroll`, `frame`, `tabs`, `switch_tab`, `wait`) run straight away.
+- Actions that **change** the page (`navigate`, `click`, `type`, `select`, `press`, `back`, `paginate`, `click_all`) show **Allow** first. **Settings → Auto-click** runs them without asking (default from `AUTO_CLICK`).
+- The result goes back to the model, which takes the next step or answers. Steps pause after 15 in a row so you can check in. **Stop** (or Esc) also stops a running `paginate`/`click_all` at the next page.
+- `paginate` extracts a table from every page by clicking the next control until the last page, and `click_all` clicks every "Show more" or expand control. Each is a single step for the model, however many clicks it takes.
+- With `VISION=1` (a model that accepts images) there is also `screenshot`, attached to the chat as an image.
+
+**Tables become SQL tables.** `extract_table` and `paginate` save all rows as a CSV file attached to the chat (`lots.csv` above). It is loaded like any attached CSV: the model can query it with SQL as table `lots` (source `files`), filter, total and join it with other attached files, and you can see it in **Tables**, download it, or remove it. Numbers written with thousands separators (`1,234`) are saved as plain numbers.
+
+**What the model sees** in the Browser menu shows exactly the page text the model gets. Check it if an answer seems to miss something. Data drawn on a canvas (some charts) isn't text; use `VISION=1` and a screenshot.
+
+**Safety.** The model is told not to press buttons that change things (save, submit, delete, acknowledge, start/stop) unless you ask for exactly that, and Allow is your check. Keep Auto-click off on pages where a wrong click matters. Web pages can contain text aimed at the model, so set `ALLOWED_DOMAINS` to the servers it may open. The browser runs as the account running Datasquint, signed in as you: keep `HOST=127.0.0.1` unless everyone on the network may use that session.
+
 ## Python scripts for offline use
 
 Any query can be turned into a standalone Python script that re-runs it later without Datasquint, the AI or the web browser:
@@ -431,9 +470,33 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `STREAM_USAGE` | `auto` | `auto` asks the AI service to report token usage on streamed replies, and stops asking if it rejects the option; `off` never asks (usage is then estimated) |
 | `FLASK_DEBUG` | `0` | `1` turns on Flask's debug mode (auto-reload on code changes, in-browser debugger) for development only. Never combine it with `HOST=0.0.0.0`: the debugger can run code. |
 
+**Browser** (see [Reading web pages](#reading-web-pages))
+
+| Variable | Default | Notes |
+|---|---|---|
+| `BROWSER_ENABLED` | `1` | `0` turns the browser off for the whole server: no **Browser** chip, selenium isn't loaded, and the model can't use a browser. Startup prints which is in effect. |
+| `BROWSER` | `edge` | Default browser: `edge` or `chrome`. The Browser menu can pick the other. |
+| `EDGE_DRIVER` / `CHROME_DRIVER` | downloaded by Selenium | Path to `msedgedriver` / `chromedriver` (needed offline; must match the browser version) |
+| `EDGE_BINARY` / `CHROME_BINARY` | the usual location | Path to `msedge` / `chrome` if installed elsewhere |
+| `PROFILE_DIR` / `CHROME_PROFILE_DIR` | `./edge-profile` / `./chrome-profile` | Profile each browser uses (keeps logins); `off` starts fresh each time |
+| `HEADLESS` | `0` | `1` runs the browser without a window (log in with it visible first) |
+| `START_URL` | none | Opened when the browser starts |
+| `EDGE_DEBUGGER` / `CHROME_DEBUGGER` | none | `host:port` of a browser started with `--remote-debugging-port`; attach to it instead of launching |
+| `ALLOWED_DOMAINS` | any | Comma list of hosts the model may open, e.g. `mes.local,10.0.0.5` |
+| `IGNORE_CERT_ERRORS` | `0` | `1` accepts self-signed certificates |
+| `AUTO_CLICK` | `0` | Default for **Settings → Auto-click** |
+| `VISION` | `0` | `1` offers the `screenshot` action (the model must accept images) |
+| `BROWSER_SNAPSHOT_CHARS` | `8000` | Page text sent per request; longer pages are read in parts |
+| `BROWSER_RESULT_ROWS` | `30` | Rows of an extracted table shown to the model (the CSV has all) |
+| `TABLE_MAX_ROWS` / `TABLE_SAMPLE_ROWS` | `5000` / `5` | Rows extracted per table / shown per table in the page text |
+| `PAGINATE_MAX_PAGES` | `200` | Most pages one `paginate` reads |
+| `SETTLE_QUIET_MS` / `SETTLE_MAX_MS` | `600` / `8000` | A page counts as loaded after this long without changes, or this long at most |
+| `PAGE_LOAD_TIMEOUT` | `60` | Seconds to wait for a page to open |
+| `WINDOW_SIZE` / `BROWSER_ARGS` / `DRIVER_ARGS` | `1400,950` / none / none | Window size and extra Edge / msedgedriver switches |
+
 ### Dependencies
 
-`flask`, `openai` and `python-dotenv` are required. The rest each enable one feature, and the app explains what to install if one is missing: `psycopg[binary]` (PostgreSQL), `duckdb` (SQL over CSV/Excel files), `python-calamine` (fast Excel loading), `cryptography` (saved connections), `paramiko` (SSH), `pypdf` (PDF), `python-docx` (Word), `openpyxl` (Excel), `Pillow` (BMP).
+`flask`, `openai` and `python-dotenv` are required. The rest each enable one feature, and the app explains what to install if one is missing: `psycopg[binary]` (PostgreSQL), `duckdb` (SQL over CSV/Excel files), `python-calamine` (fast Excel loading), `cryptography` (saved connections), `paramiko` (SSH), `pypdf` (PDF), `python-docx` (Word), `openpyxl` (Excel), `Pillow` (BMP), `selenium` (Browser).
 
 ## Error log
 
@@ -485,6 +548,14 @@ First look in the [error log](#error-log) for lines from the time it happened; t
 | A big Excel file takes minutes or the server runs out of memory | Install `python-calamine` for speed; on low-memory machines use `EXCEL_READER=openpyxl`, or save the workbook as CSV first (much faster to load). |
 | A CSV shows as text, not *table, N rows* | Install `duckdb` and re-attach the file; tables are made at upload. Files the parser can't read as a table still work as text. |
 | *This chat has several data sources…* | Sent to the model automatically when it forgets `-- db: files` or `-- db: <database>`; it retries. |
+| *Browser support isn't installed* | `pip install selenium`, then restart. |
+| No **Browser** chip in the header | The browser is turned off with `BROWSER_ENABLED=0` in `.env`. Set it to `1` (or remove the line) and restart. |
+| *The browser is turned off on this server* | Same: `BROWSER_ENABLED=0`. |
+| *Couldn't start Edge/Chrome … couldn't get msedgedriver/chromedriver* | Offline: set `EDGE_DRIVER` / `CHROME_DRIVER` to the driver matching your browser version (`edge://version`, `chrome://version`). |
+| *… only supports … version N* | The browser updated: get the matching driver. |
+| *Another … window is using its profile folder* (also *Chrome instance exited*) | A window from an earlier run still has the profile open, often after Datasquint was stopped with the browser open. Close that browser window (check Task Manager), or set another `PROFILE_DIR` / `CHROME_PROFILE_DIR`. |
+| *Chrome is already open. Close it first to use Edge.* | Only one browser at a time: **Close** it in the Browser menu, then pick the other. |
+| The model misses data that's on the page | Check **What the model sees**. The data may be in a frame (the model can use `frame`), drawn on a canvas (use `VISION=1`), or still loading (raise `SETTLE_MAX_MS`). |
 | Formatting shows as plain text | The markdown library couldn't load from cdnjs (offline). SQL blocks, Run and auto-run still work. |
 
 ## Project layout
@@ -495,6 +566,8 @@ db.py                PostgreSQL: connections, schema, read-only queries, prompts
 store.py             Saved connections in SQLite, secrets encrypted
 ssh_tunnel.py        SSH tunnels (port forwarding) to reach databases
 filesql.py           SQL over attached CSV/TSV/Excel files (DuckDB, read-only sandbox)
+browser.py           Drives Microsoft Edge or Google Chrome with Selenium; reads pages as text with numbered elements and tables
+webtools.py          Browser data source: action blocks, page text for the prompt, tables → attached CSV
 scriptgen.py         Builds the standalone Python scripts that re-run queries offline
 templates/index.html The whole web UI (HTML, CSS and JS in one file)
 USER_GUIDE.md        Guide for everyday users; served in the app at /guide (Help link)
@@ -511,7 +584,7 @@ env.example          Settings template: copy it to .env and fill it in
 
 `.gitignore` starts with a dot, so macOS and Linux hide it and it can be left out when you upload or copy the folder (for example dragging it into GitHub's *Upload files* page). Push with git (`git add .` then `git status` should list `.gitignore` and must not list `.env`), or add `.gitignore` on GitHub by hand.
 
-Created when the app runs: `connections.sqlite` and `secret.key` (on first saved connection), `ssh_known_hosts` (on first SSH connection) and `uploads/` (on first upload).
+Created when the app runs: `connections.sqlite` and `secret.key` (on first saved connection), `ssh_known_hosts` (on first SSH connection), `uploads/` (on first upload), and `edge-profile/` / `chrome-profile/` (when that browser first starts; add both to `.gitignore`).
 
 ## API
 
@@ -519,7 +592,7 @@ All responses are JSON unless noted.
 
 **Chat**
 
-- `POST /api/chat` — body `{messages, model, temperature, system, dbs}`. User messages may include `attachments: [{id}]`; `dbs` is a list of connection ids whose notes, schemas and query instructions are added to the system prompt. Returns `application/x-ndjson`: `{"delta": text}` lines, plus `{"parts": n}` and `{"status": text}` when splitting, then `{"usage": {prompt, completion, estimated}}` and `{"done": true}`, or `{"error": text}`.
+- `POST /api/chat` — body `{messages, model, temperature, system, dbs, browser}`. `browser: true` adds the browser instructions and the current page to the system prompt. User messages may include `attachments: [{id}]`; `dbs` is a list of connection ids whose notes, schemas and query instructions are added to the system prompt. Returns `application/x-ndjson`: `{"delta": text}` lines, plus `{"parts": n}` and `{"status": text}` when splitting, then `{"usage": {prompt, completion, estimated}}` and `{"done": true}`, or `{"error": text}`.
 - `GET /api/models` — `{models}`
 - `GET /api/config` — default model, system prompt, base URL, upload limit, allowed extensions
 
@@ -529,6 +602,14 @@ All responses are JSON unless noted.
 - `GET /files/<id>` — the original file
 - `GET /api/files` — every upload: `{files: [{id, name, kind, size, disk, uploaded, tables, stats}], total_disk}`; `disk` includes the table; unfinished uploads have `incomplete: true`
 - `DELETE /api/files/<id>` — delete one upload (404 if it's gone, 409 with `{error}` if it can't be deleted); `POST /api/files/delete` with `{ids}` deletes several → `{deleted, failed: [{id, error}], freed}` (bytes). Uploads still in progress (`processing: true` in the list) are refused; ids already gone count as deleted
+
+**Browser**
+
+- `GET /api/browser/status` — `{available, enabled, running, mode, browser, browser_name, url, title, tabs, frame, vision, attach, headless, start_url, default_browser, browsers: [{id, name, attach}]}`, or `{available: false, error}` without selenium
+- `POST /api/browser/start` — `{url?, headless?, browser?}` (`edge`/`chrome`; refused while the other is open); `POST /api/browser/close`; `POST /api/browser/navigate` — `{url, browser?}` (starts that browser if none is open). Each returns the status, or `{error}` with 400
+- `POST /api/browser/action` — `{action: "<the action block's JSON>", files: [chat attachment ids], browser?}` → `{action, title, text, attachments: [upload JSON], url}` or `{title, error, text}`; `text` is what the model receives. Tables are stored as uploads (CSV, loaded as SQL tables), screenshots as image uploads
+- `POST /api/browser/cancel` — stops a running `paginate` / `click_all` / `wait` at the next page or click
+- `GET /api/browser/screenshot` — `{image}` (PNG, base64); `GET /api/browser/page[?part=]` — `{text, chars}`, the page text the model gets
 
 **Help and version**
 

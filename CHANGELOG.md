@@ -8,6 +8,47 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.15.0 — 2026-10-21
+
+### Added
+- **`BROWSER_ENABLED`** turns the Browser data source on or off for the whole server. It's on by default (`1`), so nothing changes unless you set it. With `BROWSER_ENABLED=0`:
+  - the **Browser** chip and the **Auto-click** setting are hidden;
+  - selenium isn't loaded and no Edge or Chrome is started;
+  - the `/api/browser/*` routes refuse with *The browser is turned off on this server*;
+  - chats get no browser instructions, even ones that had Browser on;
+  - ```` ```action ```` blocks in replies show as plain code, with no Run or Allow button.
+- The start-up banner and log show the browser state, e.g. *Browser (web pages in Edge/Chrome): on, Edge by default*.
+- `/api/config` and `/api/browser/status` include `enabled`.
+
+## 2.14.0 — 2026-10-21
+
+### Added
+- **Google Chrome** as well as Microsoft Edge for the Browser data source. Pick one in the **Browser** menu before starting; the choice is remembered in this browser, and `BROWSER=edge|chrome` in `.env` sets the default. The model's instructions, the Browser chip and the menu name the browser in use, and a browser the model opens itself (by going to a URL) is the one you picked.
+- Each browser keeps its own profile with its own logins: `PROFILE_DIR` (Edge, `./edge-profile`) and `CHROME_PROFILE_DIR` (Chrome, `./chrome-profile`). The two can't share one.
+- Chrome settings: `CHROME_DRIVER` (chromedriver, needed offline), `CHROME_BINARY`, `CHROME_PROFILE_DIR`, `CHROME_DEBUGGER` (attach to a Chrome started with `--remote-debugging-port`).
+- API: `/api/browser/status` adds `browser`, `browser_name`, `default_browser` and `browsers`; `/api/browser/start`, `/navigate` and `/action` take `browser` (`edge`/`chrome`).
+
+### Changed
+- Clearer start-up errors for both browsers: missing or mismatched driver (with the `…_DRIVER` setting to use and the version page to check), browser not installed, profile folder in use (including after Datasquint was stopped while the browser was open), and nothing listening at the debugger address.
+- Opening the other browser while one is open is refused with "Close it first".
+- The updater keeps the `chrome-profile` folder.
+
+## 2.13.0 — 2026-10-21
+
+### Added
+- **Browser data source.** The **Browser** switch in the header lets the model read and use a Microsoft Edge window in that chat, driven by Selenium: internal web pages such as MES screens, equipment HMIs and report portals. Merged in from the separate Pagesquint prototype, which is retired.
+  - The page open now (text, numbered clickable elements, tables, frames) is added to the system prompt of every request, so questions about what's on screen need no extra step.
+  - The model writes ```` ```action ```` blocks, which work like ```` ```sql ```` blocks: actions that only read the page run straight away, and clicking, typing and opening pages show **Allow** first. **Settings → Auto-click** (or `AUTO_CLICK=1`) runs them without asking. Browser steps pause after 15 in a row.
+  - Actions: snapshot, navigate, click, type, select, press, scroll, back, find, extract_table, extract_text, frame, tabs, switch_tab, wait, plus screenshot with `VISION=1`. `paginate` extracts a table from every page by clicking Next, and `click_all` expands every "Show more", each as a single step.
+  - **Extracted tables become CSV files attached to the chat**, so they are SQL tables straight away (source `files`). They can be filtered, totalled and joined with other attached files, browsed in **Tables**, downloaded, and listed in **Storage**. Screenshots are attached as images.
+  - The Browser menu has Start/Close Edge, open a URL, Screenshot, and **What the model sees**. Edge uses its own profile (`PROFILE_DIR`), so logins persist. The model never types passwords. **Stop** also stops a running `paginate`/`click_all`.
+  - Chat export to HTML and JSON and **Import** keep browser steps and the chat's Browser switch.
+- New settings: `EDGE_DRIVER`, `EDGE_BINARY`, `PROFILE_DIR`, `HEADLESS`, `START_URL`, `EDGE_DEBUGGER`, `ALLOWED_DOMAINS`, `IGNORE_CERT_ERRORS`, `AUTO_CLICK`, `VISION`, `BROWSER_SNAPSHOT_CHARS`, `BROWSER_RESULT_ROWS`, `TABLE_MAX_ROWS`, `PAGINATE_MAX_PAGES` and others (see README → Configuration). Optional dependency: `selenium`.
+- API: `GET /api/browser/status`, `POST /api/browser/start`, `/close`, `/navigate`, `/action`, `/cancel`, `GET /api/browser/screenshot`, `GET /api/browser/page`; `browser: true` in the `/api/chat` body.
+
+### Changed
+- The updater keeps the `edge-profile` folder.
+
 ## 2.12.0 — 2026-10-17
 
 ### Added

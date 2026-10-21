@@ -1,6 +1,6 @@
 # Datasquint user guide
 
-Datasquint lets you ask questions about your company's data in plain English. It works with databases your administrator has connected and with CSV and Excel files you attach yourself. You type a question, the AI writes a database query, Datasquint runs it, and the AI answers from the real numbers.
+Datasquint lets you ask questions about your company's data in plain English. It works with databases your administrator has connected, with CSV and Excel files you attach yourself, and with web pages open in Microsoft Edge or Google Chrome. You type a question, the AI writes a database query, Datasquint runs it, and the AI answers from the real numbers.
 
 This guide covers everyday use. For installation and settings, see the README.
 
@@ -12,6 +12,7 @@ This guide covers everyday use. For installation and settings, see the README.
 - [Attaching files](#attaching-files)
 - [Asking about CSV and Excel files](#asking-about-csv-and-excel-files)
 - [Browsing tables](#browsing-tables)
+- [Reading web pages](#reading-web-pages)
 - [Python scripts for later](#python-scripts-for-later)
 - [Removing files and freeing space](#removing-files-and-freeing-space)
 - [Saving, exporting and importing chats](#saving-exporting-and-importing-chats)
@@ -43,6 +44,7 @@ The panel button at the top left of the main area hides or shows the sidebar.
 
 - **Model**: which AI model answers. Your administrator decides which ones are available.
 - **Database chip**: which data sources this chat can use. It shows a database name, *2 databases*, *Files*, or *Database off*. A blue dot means the source is connected; red means there's a problem.
+- **Browser chip**: whether the AI can read and use the browser (Edge or Chrome) in this chat; when on, it shows which one. See [Reading web pages](#reading-web-pages).
 - **Tables**: browse the tables this chat can use, with their columns and rows. See [Browsing tables](#browsing-tables).
 - **Download icon** (right): export the current chat, including as a Python script.
 
@@ -144,6 +146,34 @@ Click **Tables** in the top bar to have a look at the data before (or while) you
 
 Browsing only reads, and nothing you look at is sent to the AI.
 
+## Reading web pages
+
+Some data only lives on web pages: an MES or traceability screen, a machine's web panel, a report portal. Datasquint can read those pages in Microsoft Edge or Google Chrome, and click through them for you.
+
+**Turn it on.** Click **Browser** at the top and tick *Use the browser in this chat*. Choose **Edge** or **Chrome** and press **Start**, or type the page address and press **Go**. If the site needs a login, log in yourself in the browser window that opens. The AI never types passwords, and the browser remembers your login next time. Edge and Chrome keep separate logins, and only one can be open at a time: **Close** it to switch.
+
+**Ask about what's on screen.** The AI always sees the page that's open now, so you can simply ask:
+
+- *"Summarise this page."*
+- *"Which lots are on HOLD?"*
+
+**Ask for more.** Tell it to get data the page doesn't show yet:
+
+- *"Go through every page of the table and save all rows."*
+- *"Expand all the 'Show more' rows, then save the table."*
+- *"Open LOT-4471 and tell me the reflow peak."*
+- *"Set the range to Last 7 days and save the alarm table."*
+
+When the AI wants to click, type or open a page, it shows the step with an **Allow** button. Nothing happens until you press it. Reading the page never asks. If you trust it on these pages, turn on **Settings → Auto-click** and it works through the steps by itself. It still stops after 15 steps in a row so you can check in. **■ stop** (or Esc) stops it, even halfway through a long table.
+
+**Tables become files you can query.** When the AI saves a table from a page, it appears in the chat as a CSV file, for example `lots.csv`. From then on it's like a CSV you attached yourself. Ask *"how many per status?"* and the answer is computed exactly with SQL. You can also see it in **Tables**, download it, or remove it.
+
+**No Browser button?** Your administrator has turned the browser off for this Datasquint.
+
+**If something seems missed,** open **Browser → What the model sees** to see exactly what the AI got from the page. Charts drawn as pictures aren't text, so the AI can't read their values.
+
+Only open pages you're allowed to send to your organisation's AI, and keep Auto-click off on pages where a wrong click could change something.
+
 ## Python scripts for later
 
 Liked an answer and want to repeat it next week without the chat? Save it as a Python script:
@@ -215,6 +245,7 @@ Usually your administrator sets these up. To add one yourself: **Database → + 
 | System prompt | Standing instructions for every chat, such as *"Answer briefly. Use Singapore dates."* |
 | Temperature | 0 gives focused, repeatable answers; higher values give more varied wording. 0.2–0.7 suits data questions. |
 | Run SQL automatically | Runs the AI's queries without pressing **Run**. It stops after 5 queries in a row so a confused AI can't loop. |
+| Auto-click | Lets the AI click, type and open pages in the browser without pressing **Allow**. It stops after 15 browser steps in a row. Reading pages never asks. |
 | Token usage | How many tokens the AI has used since the last reset, per model: *in* is what was sent to the AI, *out* is what it wrote. Also shows this chat's total. **Reset counters** starts again from zero. The counts are for everyone using this Datasquint, not just you. |
 
 **Updates.** When a newer Datasquint is out, *Update available* appears under the version number at the bottom of the sidebar. Click it (or open **Settings → Updates**) to see what's new and press **Update**. Your settings, connections, files, token counts and chats are kept. Datasquint restarts and the page reloads by itself. On a shared server your administrator may have turned this off, in which case it only tells you an update exists.
@@ -234,7 +265,7 @@ Appearance and colour are remembered in this browser only, so each person (and e
 ## What stays private
 
 - **On the Datasquint server**: your uploaded files, database passwords (encrypted), and the full results of every query.
-- **Sent to the AI model**: your messages, attached file text or previews, table and column names with a few sample rows, and query results (at most 200 rows each).
+- **Sent to the AI model**: your messages, the text of the web page open in the browser (when Browser is on), attached file text or previews, table and column names with a few sample rows, and query results (at most 200 rows each).
 - **In your browser**: your chats.
 
 Only attach files and connect data you're allowed to send to the AI provider your organisation uses.

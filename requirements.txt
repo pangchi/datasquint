@@ -10,5 +10,6 @@ paramiko>=3.4        # optional: PostgreSQL over SSH
 cryptography>=42      # required for saved connections (encrypts passwords)
 duckdb>=1.1          # optional: SQL over attached CSV/TSV/Excel files
 python-calamine>=0.2  # optional: ~10x faster Excel loading for SQL tables
+selenium>=4.20       # optional: browser data source (Microsoft Edge); fetches msedgedriver when online
 pycel                               # calculates formulas saved without results (small files) if Excel/LibreOffice aren't installed
 pywin32; sys_platform == "win32"    # lets Datasquint use Microsoft Excel for that, when installed

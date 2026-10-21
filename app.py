@@ -54,11 +54,13 @@ import filesql
 import scriptgen
 import updater
 import usage
+import webtools
 from version import __version__ as VERSION
 log = logsetup.child("web")
 ulog = logsetup.child("upload")
 qlog = logsetup.child("query")
 clog = logsetup.child("chat")
+blog = logsetup.child("browser")
 from flask import Flask, Response, abort, jsonify, render_template, request, send_from_directory, stream_with_context
 from werkzeug.utils import secure_filename
 
@@ -412,6 +414,31 @@ def _process_upload(f, ext, fid, folder):
     if meta.get("tables"):
         out["tables"] = [{"rows": t["rows"], "columns": len(t["columns"]), "sheet": t["sheet"]} for t in meta["tables"]]
     return jsonify(out)
+
+
+def ingest_generated(filename, data, mime):
+    """Store a file the app made itself (a table or screenshot taken from the browser) exactly like an
+    upload, so it's attached to the chat, listed in Storage and, for CSV, loaded as an SQL table.
+    Returns the same JSON an upload returns; raises ValueError with the reason if it's rejected."""
+    from werkzeug.datastructures import FileStorage
+    ext = os.path.splitext(filename)[1].lower()
+    fid = uuid.uuid4().hex
+    folder = os.path.join(UPLOAD_DIR, fid)
+    with _uploads_lock:
+        _in_progress[fid] = (filename, time.time())
+    try:
+        os.makedirs(folder)
+        resp = _process_upload(FileStorage(stream=io.BytesIO(data), filename=filename, content_type=mime),
+                               ext, fid, folder)
+    except Exception:
+        remove_tree(folder)
+        raise
+    finally:
+        with _uploads_lock:
+            _in_progress.pop(fid, None)
+    if isinstance(resp, tuple):          # (response, status): rejected, e.g. too large
+        raise ValueError((resp[0].get_json() or {}).get("error") or "the file was rejected")
+    return resp.get_json()
 
 
 # ---------------------------------------------------------------- stored uploads (Storage panel)
@@ -800,7 +827,10 @@ def config():
     return jsonify(version=VERSION, default_model=DEFAULT_MODEL, system_prompt=SYSTEM_PROMPT, base_url=BASE_URL,
                    max_upload_mb=MAX_UPLOAD_MB, max_table_upload_mb=MAX_TABLE_UPLOAD_MB,
                    table_extensions=sorted(filesql.TABLE_EXTS) if filesql.available() else [], max_send_chars=MAX_SEND_CHARS, allowed_extensions=sorted(ALLOWED_EXTS),
-                   special_names=sorted(SPECIAL_NAMES))
+                   special_names=sorted(SPECIAL_NAMES),
+                   browser={"enabled": webtools.ENABLED, "available": webtools.available(), "error": webtools.off_reason(),
+                            "read_actions": sorted(webtools.READ_ACTIONS), "vision": webtools.VISION,
+                            "auto_click": os.getenv("AUTO_CLICK", "0") == "1"})
 
 
 @app.get("/api/models")
@@ -1207,6 +1237,159 @@ def recent_logs():
     return Response("\n".join(logsetup.tail(n)) + "\n", mimetype="text/plain")
 
 
+# ---------------------------------------------------------------- browser (webtools.py, browser.py)
+def _browser_ready():
+    if not webtools.available():
+        raise webtools.BrowserError(webtools.off_reason())
+
+
+def _browser_locked(fn, *a, **kw):
+    """Manual controls wait briefly for a running browser action instead of fighting it."""
+    _browser_ready()
+    b = webtools.browser
+    if not b.lock.acquire(timeout=30):
+        raise webtools.BrowserError("The browser is busy with an action; try again in a moment.")
+    try:
+        return fn(*a, **kw)
+    finally:
+        b.lock.release()
+
+
+def _berr(e):
+    first = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+    return jsonify(error=first), 400
+
+
+@app.get("/api/browser/status")
+def browser_status():
+    if not webtools.available():
+        return jsonify(available=False, enabled=webtools.ENABLED, running=False, error=webtools.off_reason())
+    from browser import BROWSERS, default_kind
+    return jsonify(available=True, vision=webtools.VISION, default_browser=default_kind(),
+                   browsers=[{"id": k, "name": b["name"], "attach": os.getenv(b["env"] + "_DEBUGGER", "")}
+                             for k, b in BROWSERS.items()],
+                   attach=os.getenv(webtools.browser.kind.upper() + "_DEBUGGER", ""),
+                   headless=os.getenv("HEADLESS", "0") == "1", start_url=os.getenv("START_URL", ""),
+                   **webtools.browser.status())
+
+
+@app.post("/api/browser/start")
+def browser_start():
+    data = request.get_json(silent=True) or {}
+    try:
+        _browser_ready()
+        st = _browser_locked(webtools.browser.start, headless=data.get("headless"), kind=data.get("browser"))
+        url = (data.get("url") or os.getenv("START_URL", "")).strip()
+        if url and st.get("mode") == "launched" and (st.get("url") or "").startswith(("about:", "data:", "edge:", "chrome:")):
+            _browser_locked(webtools.browser.navigate, url)
+        blog.info("%s started (%s)", st.get("browser_name", "Browser"), webtools.browser.mode)
+        return jsonify(available=True, **webtools.browser.status())
+    except Exception as e:
+        blog.error("Browser didn't start: %s", e)
+        return _berr(e)
+
+
+@app.post("/api/browser/close")
+def browser_close():
+    try:
+        _browser_ready()
+        return jsonify(available=True, **_browser_locked(webtools.browser.stop))
+    except Exception as e:
+        return _berr(e)
+
+
+@app.post("/api/browser/navigate")
+def browser_navigate():
+    try:
+        _browser_ready()
+        data = request.get_json(silent=True) or {}
+        if data.get("browser") and not webtools.browser.alive():    # Go with nothing open: start the one picked
+            _browser_locked(webtools.browser.start, kind=data.get("browser"))
+        _browser_locked(webtools.browser.navigate, data.get("url", ""))
+        return jsonify(available=True, **webtools.browser.status())
+    except Exception as e:
+        return _berr(e)
+
+
+@app.get("/api/browser/screenshot")
+def browser_screenshot():
+    try:
+        _browser_ready()
+        return jsonify(image=_browser_locked(webtools.browser.screenshot_b64))
+    except Exception as e:
+        return _berr(e)
+
+
+@app.get("/api/browser/page")
+def browser_page():
+    """The page text the model gets ("What the AI sees")."""
+    try:
+        _browser_ready()
+        text, chars = _browser_locked(webtools.page_text, int(request.args.get("part", 1)))
+        return jsonify(text=text, chars=chars)
+    except Exception as e:
+        return _berr(e)
+
+
+@app.post("/api/browser/cancel")
+def browser_cancel():
+    """Stop pressed while an action runs: paginate / click_all / wait stop at the next page or click."""
+    webtools.cancel_event.set()
+    return jsonify(ok=True)
+
+
+@app.post("/api/browser/action")
+def browser_action():
+    """Run one ```action block. Tables become CSV files attached to the chat (SQL tables), screenshots images.
+
+    Body: {"action": "<the block's JSON text>", "files": [chat's attachment ids, in order]}
+    Returns {"action", "title", "text" (for the model), "attachments": [upload JSON], "error"}.
+    """
+    data = request.get_json(force=True) or {}
+    raw = data.get("action")
+    action, err = webtools.parse(raw if isinstance(raw, str) else json.dumps(raw))
+    if err:
+        return jsonify(error=err, title="Action not understood", text=f"```action\n{raw}\n```\nError: {err}")
+    title = webtools.describe(action)
+    head = f"```action\n{json.dumps(action, ensure_ascii=False)}\n```\n"
+    t0 = time.time()
+    try:
+        _browser_ready()
+        if data.get("browser") and not webtools.browser.alive():   # nothing open: start the one picked in the menu
+            _browser_locked(webtools.browser.start, kind=data.get("browser"))
+        res = webtools.execute(action)
+    except Exception as e:
+        msg = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+        if not isinstance(e, webtools.BrowserError):
+            blog.exception("Action %s failed", title)
+        else:
+            blog.warning("Action %s failed: %s", title, msg)
+        return jsonify(action=action, title=title, error=msg, text=head + "Error: " + msg)
+    atts, text = [], res["text"]
+    try:
+        if res.get("csv"):
+            name, body = res["csv"]
+            meta = ingest_generated(name, body, "text/csv")
+            atts.append(meta)
+            if meta.get("tables"):
+                ids = [i for i in (data.get("files") or []) if isinstance(i, str)] + [meta["id"]]
+                names = [t["name"] for t in file_tables(ids) if t["fid"] == meta["id"]]
+                text += (f"\n\nSaved as {name}, attached to this chat. Query it with SQL as table "
+                         f"{', '.join(names) or name} (source '{db.FILES_SOURCE}').")
+            else:
+                text += f"\n\nSaved as {name}, attached to this chat (not loaded as a SQL table: " \
+                        f"{meta.get('table_error') or 'SQL over files is off'})."
+        if res.get("png"):
+            atts.append(ingest_generated(time.strftime("screenshot-%H%M%S.png"), res["png"], "image/png"))
+    except Exception as e:
+        blog.warning("Couldn't attach the result of %s: %s", title, e)
+        text += f"\n\n(The result couldn't be saved as a file: {e})"
+    blog.info("Action %s: %.1f s%s", title, time.time() - t0,
+              f", attached {', '.join(a['name'] for a in atts)}" if atts else "")
+    return jsonify(action=action, title=title, text=head + text, attachments=atts,
+                   url=webtools.browser.status().get("url", ""))
+
+
 @app.get("/api/usage")
 def usage_get():
     """Token counters: totals and per model, since the last reset."""
@@ -1246,6 +1429,9 @@ def chat():
             clog.warning("Data sources unavailable for a chat: %s", e)
             system = (system + f"\n\n(Databases are enabled for this chat but unavailable: {e}. "
                       "Tell the user if they ask for data.)").strip()
+    if data.get("browser") and webtools.ENABLED:
+        # read now, so the model sees the page as it is at this moment (after the last click)
+        system = (system + "\n\n" + webtools.system_section()).strip()
 
     messages = [{"role": m.get("role", "user"), "content": build_content(m, ftables)} for m in raw]
     if system:
@@ -1316,11 +1502,13 @@ if __name__ == "__main__":
           else f"calculated with {recalc.available()}"))
     print(f" * Open http://{shown}:{port} in your browser")
     print(f" * Error log: {LOG_PATH or 'console only (the log file could not be opened)'}")
+    print(f" * Browser (web pages in Edge/Chrome): {webtools.status_line()}")
     print(" * Updates from GitHub: " + {"on": f"on ({updater.REPO}, {updater.BRANCH}); install from Settings → Updates",
                                         "check": f"check only ({updater.REPO}, {updater.BRANCH})",
                                         "off": "off (UPDATES=off)"}[updater.MODE])
     updater.check_in_background()
-    log.info("Datasquint %s starting on %s:%s (SQL over files: %s)", VERSION, host, port, filesql.status())
+    log.info("Datasquint %s starting on %s:%s (SQL over files: %s; browser: %s)", VERSION, host, port, filesql.status(),
+             webtools.status_line())
     app.run(host=host, port=port, debug=debug, threaded=True,
             # watchdog matches patterns per path segment, so list each depth under uploads/
             exclude_patterns=[os.path.join(UPLOAD_DIR, *["*"] * n) for n in (1, 2, 3)] + ["*.sqlite", "*.duckdb", "*.log", "*.log.*"]

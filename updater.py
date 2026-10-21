@@ -50,7 +50,7 @@ MAX_ZIP = 50 * 1024 * 1024
 
 # Never overwritten or removed by an update: settings, secrets, data and history.
 KEEP = {".env", "secret.key", "connections.sqlite", "ssh_known_hosts", "usage.json", "usage.json.tmp"}
-KEEP_DIRS = {"uploads", "logs", "backups", ".git", "__pycache__", "venv", ".venv"}
+KEEP_DIRS = {"uploads", "logs", "backups", ".git", "__pycache__", "venv", ".venv", "edge-profile", "chrome-profile"}
 
 log = logging.getLogger("datasquint.update")
 SELF_RESTART = False            # set by app.py when started as `python app.py`
