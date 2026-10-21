@@ -1,11 +1,11 @@
 # Datasquint
 
-**Version 2.15.0** · [Changelog](CHANGELOG.md)
+**Version 2.16.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
 - **Databases**: save any number of PostgreSQL connections, direct or through SSH, and choose which ones each chat can use. Queries are strictly read-only.
-- **Files**: images, PDF, Word, Excel, CSV, JSON, text, code and zip archives. Attached CSV, TSV and Excel files become SQL tables, so totals and comparisons are computed exactly, not estimated.
+- **Files**: images, PDF, Word, Excel, CSV, JSON, text, code and zip archives. Attached CSV, TSV, Excel and Parquet files (and gzipped CSV) become SQL tables, so totals and comparisons are computed exactly, not estimated.
 - **Web pages**: turn on **Browser** and the model reads the page open in Microsoft Edge or Google Chrome, clicks through to get more (all pages of a report, detail views, "Show more"), and saves tables it finds as CSV files that become SQL tables.
 - **Any model**: OpenAI, Azure OpenAI proxies, vLLM, Ollama, LM Studio, LiteLLM, OpenRouter and others. No tool/function-calling support needed.
 - **Big inputs**: requests larger than a set size are split into parts automatically and combined into one answer.
@@ -184,12 +184,12 @@ Attach files with the paperclip, by dragging them onto the window, or by pasting
 |---|---|---|
 | Images | JPG/JPEG, PNG, GIF, WebP, BMP | Images (needs a vision-capable model). BMP is converted to PNG. |
 | Documents | PDF, Word (.docx), TXT, MD | Text. Word tables are included. Scanned PDFs need OCR first. |
-| Data | CSV, TSV, Excel (.xlsx, .xlsm) | **SQL tables** the model queries (see [Querying CSV and Excel files](#querying-csv-and-excel-files)), plus a short preview. Without DuckDB installed: the full text, each Excel sheet as a CSV block. |
+| Data | CSV, TSV, Excel (.xlsx, .xlsm), Parquet (.parquet), gzipped CSV/TSV (.csv.gz, .tsv.gz) | **SQL tables** the model queries (see [Querying CSV and Excel files](#querying-csv-and-excel-files)), plus a short preview. Without DuckDB installed: the full text, each Excel sheet as a CSV block. |
 | Data | JSON, YAML, XML | Text. |
 | Code | Python, JavaScript, HTML, CSS, C/C++, Java, Go, Rust and ~40 more, plus Dockerfile and Makefile | Text |
 | Archives | ZIP | Each file inside, handled by the rules above |
 
-Other types are refused in the file picker and on the server. Change the list with `ALLOWED_EXTENSIONS`, or edit `IMAGE_EXTS`, `DOC_EXTS` and `TEXT_EXTS` in `app.py`.
+Other types are refused in the file picker and on the server. Change the list with `ALLOWED_EXTENSIONS`, or edit `IMAGE_EXTS`, `DOC_EXTS`, `TEXT_EXTS` and `DATA_EXTS` in `app.py`. `.csv.gz` and `.tsv.gz` count as one type; other `.gz` files are refused.
 
 Files are stored under `uploads/<id>/` and chats keep only their ids, so large files don't fill the browser's storage. **Excel formulas: values, never formula text.** Datasquint reads each formula's **result**, not the formula, so a cell with `=B2/(B2+C2)` loads as `0.5`. Excel and LibreOffice save those results in the file. Some programs (report exporters, Python libraries) save only the formula, with no result. Datasquint detects that at upload with a quick scan (well under a second even for a 200 MB workbook) and calculates the formulas with the first of these the server has:
 
@@ -220,7 +220,8 @@ Drop one or more CSV, TSV or Excel files into a chat (or pick several with the p
 - The file is loaded into a small DuckDB database stored with the upload (`uploads/<id>/tables.duckdb`). Column types (whole numbers, decimals, dates, timestamps, text) are detected from all rows, and the delimiter and header row are detected automatically.
 - **Several tables in one sheet or CSV are split into separate tables.** Blocks separated by a blank row (stacked) or a blank column (side by side) each become their own table, with their own header row. A one-cell line above a table, like *Weekly QA report*, is taken as its title and names the table (`qa_report_weekly_qa_report`); otherwise the table is named after its first column heading (`qa_report_station`), or `table_2`, `table_3`. Blocks that are really one table stay together: a block that doesn't start with a header row (more data after a spacing row, a lone total line) or repeats the header above it (page breaks) is joined to the table above. Ordinary one-table files skip this entirely and load exactly as before. Turn it off with `SPLIT_TABLES=0`.
 - Column names are converted to `lower_snake_case`: `Unit Price ($)` becomes `unit_price`, `Order Date` becomes `order_date`. Names that are SQL keywords get a leading underscore (`Operator` becomes `_operator`); the schema the model sees shows the final names.
-- **Big files**: CSV, TSV and Excel files can be up to `MAX_TABLE_UPLOAD_MB` (default **200 MB**), well above the 20 MB limit for other files, because only a preview reaches the model. The chip shows upload progress, then *Loading table…* while the table is built. Only the first 64 KB of the file is read as text.
+- **Big files**: CSV, TSV, Excel and Parquet files can be up to `MAX_TABLE_UPLOAD_MB` (default **1000 MB**), well above the 20 MB limit for other files, because only a preview reaches the model. As a guide, measured on a 2-core, 8 GB machine: a 1.46 GB CSV with 5 million rows and 20 columns loads in about 40 s, takes about 2.4 GB of memory while loading and 490 MB on disk as a table, and totals or GROUP BYs over it take well under a second. For much bigger files, see *Very large data* below.
+- **Compressed and columnar files**: a `.csv.gz` or `.tsv.gz` is unpacked on the server and loaded like any CSV (the limit applies to the compressed size; the unpacked size is capped by `MAX_UNCOMPRESSED_MB`, default 10,000 MB). A gzipped CSV is usually 2–5 times smaller to upload: the 1.46 GB example is a 680 MB `.csv.gz` and loads in about 50 s. A `.parquet` file loads directly with its column types; its column names get the same `lower_snake_case` treatment. The chip shows upload progress, then *Loading table…* while the table is built. Only the first 64 KB of the file is read as text.
 - CSVs saved by Excel in Windows encoding (accents like *München*) are converted to UTF-8 first.
 - The chip shows the result, e.g. *85 KB · table, 2,500 rows* or *2 tables, 4 rows* for a two-sheet workbook. Empty sheets are skipped.
 
@@ -258,7 +259,11 @@ Disk use per file is the original (kept so it can be opened from the chat) plus 
 
 If a file still can't become a table, it's read as text instead (under the 20 MB limit) and **its chip says why**, with a ⚠ and a notice: for example a password-protected workbook, an old `.xls` renamed to `.xlsx`, `FILE_TABLES=0`, or DuckDB not installed on the server. Partial problems (a skipped sheet, text-only columns) show as *⚠ N notes* on the chip; hover to read them.
 
-**Limits**: CSV/TSV/Excel up to `MAX_TABLE_UPLOAD_MB` (200 MB), other files up to `MAX_UPLOAD_MB` (20 MB). A file that ends up read as text has the 20 MB limit. Excel allows about a million rows per sheet; bigger data needs several sheets or a CSV. CSV and Excel files inside a zip are sent as text, not tables; attach them directly to query them. Excel formulas give their last saved values (see [Attaching files](#attaching-files)).
+**Wide files**: any number of columns load. The model is given every table's columns, with types and a few sample rows; when that doesn't fit in the 20,000 characters set aside for a chat's files, the detail drops table by table: sample rows first, then types, and for very wide tables (thousands of columns) the names past the space left. It is then told how to look columns up with SQL (`information_schema.columns ... ILIKE '%word%'`), and its file preview is cut to short lines.
+
+**Very large data**: up to about 2 GB per file works on an 8 GB server: raise `MAX_TABLE_UPLOAD_MB` (and nginx's `client_max_body_size`), and `FILES_SQL_MEMORY` to 2–4 GB for heavy joins or `COUNT(DISTINCT …)`. Plan for about 1.5 × the file size in memory while it loads and 1.4 × on disk (original plus table). Beyond that, or for data you load every month, put it in PostgreSQL and connect it as a database instead of uploading it again and again.
+
+**Limits**: CSV/TSV/Excel/Parquet up to `MAX_TABLE_UPLOAD_MB` (1000 MB), other files up to `MAX_UPLOAD_MB` (20 MB). A file that ends up read as text has the 20 MB limit. Excel allows about a million rows per sheet; bigger data needs several sheets or a CSV. CSV and Excel files inside a zip are sent as text, not tables; attach them directly to query them. Excel formulas give their last saved values (see [Attaching files](#attaching-files)).
 
 ## Browsing tables
 
@@ -330,7 +335,7 @@ python weekly_qa_check.py --data D:/exports --out D:/results --only 2 --show 20
 
 ## Removing files and freeing space
 
-Uploads are kept on the server in `uploads/<id>/` (the original file, plus `tables.duckdb` for CSV/Excel) until something deletes them. A 200 MB CSV takes about 225 MB. There are three ways to remove them, and every one asks for confirmation first.
+Uploads are kept on the server in `uploads/<id>/` (the original file, plus `tables.duckdb` for CSV/Excel) until something deletes them. A 200 MB CSV takes about 225 MB; a 1.46 GB one about 1.95 GB, or 1.17 GB if uploaded as `.csv.gz`. There are three ways to remove them, and every one asks for confirmation first.
 
 **Remove a file from a sent message**: hover over the file in your message and click its **✕**.
 
@@ -440,7 +445,8 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 |---|---|---|
 | `MAX_UPLOAD_MB` | `20` | Per-file upload limit |
 | `FILE_TABLES` | `1` | `1` loads CSV/TSV/Excel into DuckDB as SQL tables, allowing large files up to `MAX_TABLE_UPLOAD_MB`. `0` turns this off: those files are read as text like other documents, limited to `MAX_UPLOAD_MB`, and the model can't query them with SQL. Files loaded as tables earlier then reach the model as their first lines only. Startup prints which is in effect. |
-| `MAX_TABLE_UPLOAD_MB` | `200` | Per-file limit for CSV/TSV/Excel loaded as SQL tables (needs `duckdb`; otherwise `MAX_UPLOAD_MB` applies) |
+| `MAX_TABLE_UPLOAD_MB` | `1000` | Per-file limit for CSV/TSV/Excel/Parquet (and the compressed size of `.csv.gz`) loaded as SQL tables (needs `duckdb`; otherwise `MAX_UPLOAD_MB` applies). Was 200 before 2.16.0. |
+| `MAX_UNCOMPRESSED_MB` | `10000` | Largest a `.csv.gz` / `.tsv.gz` may unpack to |
 | `EXCEL_RECALC` | `auto` | Formulas saved without results: `auto` calculates them (Excel, LibreOffice or the built-in calculator); `off` loads them empty and warns |
 | `RECALC_ENGINES` | `excel,libreoffice,pycel` | Which calculators to try, in order |
 | `PYCEL_MAX_FORMULAS` / `PYCEL_MAX_MB` / `PYCEL_TIME_LIMIT` | `5000` / `20` / `120` | Limits for the built-in calculator (formulas without results, file size in MB, seconds) |
@@ -451,7 +457,7 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `MAX_TEXT_CHARS` | `400000` | Text kept per file or zip |
 | `ALLOWED_EXTENSIONS` | built-in list | Comma list that replaces the allowed types, e.g. `.png,.pdf,.csv` |
 | `ZIP_MAX_FILES` / `ZIP_MAX_TOTAL_MB` / `ZIP_MAX_IMAGES` | `300` / `100` / `10` | Zip limits |
-| `FILES_SQL_MEMORY` | `1GB` | Memory limit for SQL over attached CSV/Excel files |
+| `FILES_SQL_MEMORY` | `1GB` | Memory limit for SQL over attached CSV/Excel files; 2–4 GB for heavy joins or distinct counts on files over 1 GB |
 | `MAX_SEND_CHARS` | `100000` | Largest single request to the model |
 | `PART_NOTE_TOKENS` | `2000` | Length of each part's notes when splitting |
 | `UPLOAD_DIR` | `./uploads` | Where uploads are stored |
@@ -544,7 +550,10 @@ First look in the [error log](#error-log) for lines from the time it happened; t
 | *Couldn't save chats: the browser's storage is full* | Export your chats, then delete old ones. |
 | Chip is red / "Database off" | Click it to tick databases or check which one is unreachable. |
 | The model says it has no database access | The database isn't ticked for this chat. |
-| *Over the 200 MB limit…* / *larger than the upload limit* | Raise `MAX_TABLE_UPLOAD_MB` (CSV/Excel) or `MAX_UPLOAD_MB` (other files). Behind nginx, also raise `client_max_body_size`. |
+| *Over the 1000 MB limit…* / *larger than the upload limit* | Compress it to `.csv.gz` (2–5 × smaller), or raise `MAX_TABLE_UPLOAD_MB` (data files) or `MAX_UPLOAD_MB` (other files). Behind nginx, also raise `client_max_body_size`. |
+| *It unpacks to more than … MB* | The `.csv.gz` is bigger than `MAX_UNCOMPRESSED_MB` once unpacked. Split it or raise the limit. |
+| *This Parquet file couldn't be read* | The file is incomplete (an interrupted copy) or not Parquet. Export it again. |
+| The model ignores columns of a very wide file | With thousands of columns it only sees the first ones by name; tell it which columns you mean, or ask it to look them up (it knows the query). |
 | A big Excel file takes minutes or the server runs out of memory | Install `python-calamine` for speed; on low-memory machines use `EXCEL_READER=openpyxl`, or save the workbook as CSV first (much faster to load). |
 | A CSV shows as text, not *table, N rows* | Install `duckdb` and re-attach the file; tables are made at upload. Files the parser can't read as a table still work as text. |
 | *This chat has several data sources…* | Sent to the model automatically when it forgets `-- db: files` or `-- db: <database>`; it retries. |
@@ -565,7 +574,7 @@ app.py               Flask app: chat streaming, uploads, splitting, API routes
 db.py                PostgreSQL: connections, schema, read-only queries, prompts
 store.py             Saved connections in SQLite, secrets encrypted
 ssh_tunnel.py        SSH tunnels (port forwarding) to reach databases
-filesql.py           SQL over attached CSV/TSV/Excel files (DuckDB, read-only sandbox)
+filesql.py           SQL over attached CSV/TSV/Excel/Parquet/.csv.gz files (DuckDB, read-only sandbox)
 browser.py           Drives Microsoft Edge or Google Chrome with Selenium; reads pages as text with numbered elements and tables
 webtools.py          Browser data source: action blocks, page text for the prompt, tables → attached CSV
 scriptgen.py         Builds the standalone Python scripts that re-run queries offline
@@ -637,7 +646,7 @@ All responses are JSON unless noted.
 
 ## Running in production
 
-- Run behind gunicorn with threaded workers so streaming isn't buffered, and a timeout long enough to load big Excel files: `gunicorn -k gthread --threads 8 --timeout 300 -b 127.0.0.1:5000 app:app` (gunicorn's default 30 s timeout would cut off a 200 MB workbook). Behind nginx, turn off proxy buffering for `/api/chat`, and raise the upload size and timeout for `/api/upload`: `client_max_body_size 210m; proxy_read_timeout 300s;` (nginx's default upload limit is 1 MB).
+- Run behind gunicorn with threaded workers so streaming isn't buffered, and a timeout long enough to load big Excel files: `gunicorn -k gthread --threads 8 --timeout 300 -b 127.0.0.1:5000 app:app` (gunicorn's default 30 s timeout would cut off a 200 MB workbook; a 1 GB CSV takes about 30–50 s to load). Behind nginx, turn off proxy buffering for `/api/chat`, and raise the upload size and timeout for `/api/upload` to match `MAX_TABLE_UPLOAD_MB`: `client_max_body_size 1010m; proxy_read_timeout 300s; proxy_request_buffering off;` (nginx's default upload limit is 1 MB). The upload request waits while the table is built, so the read timeout must cover the load time.
 - Add authentication in front of it before opening it beyond your own machine; see [Security](#security).
 - Keep `FLASK_DEBUG` unset or `0` (the default). Earlier versions always ran in debug mode, which exposed an in-browser debugger on errors and restarted the server whenever a `.zip` was uploaded.
 - Uploaded files are never deleted automatically. Use the **Storage** panel (or delete chats with their files) to clean up; see [Removing files and freeing space](#removing-files-and-freeing-space). Deleting folders in `uploads/` by hand also works; chats that refer to them show the files as unavailable.

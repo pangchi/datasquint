@@ -39,7 +39,11 @@ except ImportError:  # optional dependency
 
 log = logging.getLogger("datasquint.files")
 
-TABLE_EXTS = {".csv", ".tsv", ".xlsx", ".xlsm"}
+TABLE_EXTS = {".csv", ".tsv", ".xlsx", ".xlsm", ".parquet", ".csv.gz", ".tsv.gz"}
+GZIP_EXTS = {".csv.gz", ".tsv.gz"}
+BINARY_TABLE_EXTS = {".parquet", ".csv.gz", ".tsv.gz"}   # can't be read as text if loading as a table fails
+# A .csv.gz is unpacked before loading; this caps the unpacked size (a tiny file can expand enormously).
+MAX_UNCOMPRESSED_MB = int(os.getenv("MAX_UNCOMPRESSED_MB", 10000))
 EXCEL_EXTS = {".xlsx", ".xlsm"}
 HEAD_BYTES = 64 * 1024      # how much of each file the text preview reads
 DB_FILE = "tables.duckdb"
@@ -77,8 +81,23 @@ def status():
     return "on" if ENABLED else "off (FILE_TABLES=0)"
 
 
+def table_ext(name):
+    """The file type, counting .csv.gz / .tsv.gz as one extension."""
+    n = name.lower()
+    for e in GZIP_EXTS:
+        if n.endswith(e):
+            return e
+    return os.path.splitext(n)[1]
+
+
 def is_tabular(name):
-    return os.path.splitext(name)[1].lower() in TABLE_EXTS
+    return table_ext(name) in TABLE_EXTS
+
+
+def stem(name):
+    """File name without its (possibly double) extension: lots.csv.gz -> lots."""
+    e = table_ext(name)
+    return name[:-len(e)] if e and name.lower().endswith(e) else os.path.splitext(name)[0]
 
 
 def _ident(name):
@@ -550,7 +569,13 @@ def prepare(path, name, folder, warnings=None):
     columns loaded as text) are appended to `warnings`.
     """
     warnings = warnings if warnings is not None else []
-    ext = os.path.splitext(name)[1].lower()
+    ext = table_ext(name)
+    if ext == ".parquet":
+        return _prepare_parquet(path, folder)
+    gz = ext in GZIP_EXTS
+    if gz:   # unpack, then load it like any CSV (encoding check, several tables in one file, preview)
+        path = _gunzip(path, os.path.join(folder, "source_gz.csv"))   # removed by cleanup()
+        ext = ext[:-3]
     recalced, missing = None, {}
     if ext in EXCEL_EXTS:
         missing = recalc.uncached(path)
@@ -655,7 +680,74 @@ def prepare(path, name, folder, warnings=None):
         if os.path.exists(dbpath):
             os.remove(dbpath)
         raise ValueError(" ".join(warnings) or "No data found to load as a table.")
+    if gz:
+        for t in out:
+            t["load"]["gzip"] = True   # generated scripts unpack the original .gz the same way
     return out
+
+
+def _gunzip(src, dest):
+    """Unpack a .csv.gz upload, refusing anything that expands past MAX_UNCOMPRESSED_MB."""
+    import gzip
+    limit, total = MAX_UNCOMPRESSED_MB * 1024 * 1024, 0
+    try:
+        with gzip.open(src, "rb") as fi, open(dest, "wb") as fo:
+            while chunk := fi.read(1 << 20):
+                total += len(chunk)
+                if total > limit:
+                    raise ValueError(f"It unpacks to more than {MAX_UNCOMPRESSED_MB:,} MB (MAX_UNCOMPRESSED_MB). "
+                                     "Split it into smaller files, or raise the limit.")
+                fo.write(chunk)
+    except (OSError, EOFError) as e:      # gzip.BadGzipFile is an OSError
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        raise ValueError(f"This isn't a readable .gz file ({e}). Compress it again with gzip or 7-Zip.") from None
+    except ValueError:
+        os.remove(dest)
+        raise
+    return dest
+
+
+def _parquet_select(con, path):
+    """SELECT list giving a Parquet file's columns the same lower_snake_case names CSV columns get."""
+    reserved = {r[0] for r in con.execute(
+        "SELECT keyword_name FROM duckdb_keywords() WHERE keyword_category = 'reserved'").fetchall()}
+    cols = [r[0] for r in con.execute("DESCRIBE SELECT * FROM read_parquet(?)", [path]).fetchall()]
+    names, seen = [], {}
+    for c in cols:
+        n = re.sub(r"[^a-z0-9_]+", "_", str(c).strip().lower()).strip("_") or "column"
+        if n[0].isdigit() or n in reserved:
+            n = "_" + n
+        k = seen[n] = seen.get(n, 0) + 1
+        names.append(n if k == 1 else f"{n}_{k}")
+    return ", ".join(f"{_q(c)} AS {_q(n)}" for c, n in zip(cols, names))
+
+
+def _prepare_parquet(path, folder):
+    dbpath = os.path.join(folder, DB_FILE)
+    con = duckdb.connect(dbpath)
+    try:
+        try:
+            select = _parquet_select(con, path)
+            con.execute(f"CREATE TABLE t0 AS SELECT {select} FROM read_parquet(?)", [path])
+        except duckdb.Error as e:
+            why = re.sub(r"\s*'[^']*[/\\][^']*'", "", str(e).strip().splitlines()[0])[:200]   # no server paths
+            raise ValueError(f"This Parquet file couldn't be read ({why}). It may be incomplete or not a Parquet file.") from None
+        cols = [[c[0], c[1]] for c in con.execute("DESCRIBE t0").fetchall()]
+        rows = int(con.execute("SELECT count(*) FROM t0").fetchone()[0])
+        # Parquet has no text to preview: keep the first rows as CSV for the preview (removed by cleanup)
+        head = os.path.join(folder, "source_parquet_head.csv")
+        con.execute(f"COPY (SELECT * FROM t0 LIMIT 200) TO '{head.replace(chr(39), chr(39) * 2)}' (HEADER)")
+    except BaseException:
+        con.close()
+        if os.path.exists(dbpath):
+            os.remove(dbpath)
+        raise
+    con.close()
+    return [{"table": "t0", "sheet": "", "columns": cols, "rows": rows, "src": os.path.basename(head),
+             "load": {"kind": "parquet", "select": select}}]
 
 
 def off_reason():
@@ -682,7 +774,7 @@ def chat_tables(file_ids, load_meta, upload_dir):
         db = os.path.join(upload_dir, fid, DB_FILE)
         if not os.path.exists(db):
             continue
-        base = _ident(os.path.splitext(meta["name"])[0])
+        base = _ident(stem(meta["name"]))
         sheets = {t.get("sheet") for t in meta["tables"]}
         for t in meta["tables"]:
             name = base if not t.get("sheet") or len(sheets) == 1 else _ident(f"{base}_{t['sheet']}")
@@ -756,9 +848,45 @@ def _md(v):
     return s.replace("|", "\\|").replace("\n", " ")[:60]
 
 
+def _columns_text(t, rows, level, budget=None):
+    """One table for the model at a level of detail: 0 = columns with types and sample rows, 1 = columns with
+    types, 2 = column names only. At level 2 the names are cut to `budget` characters if needed, saying how
+    to list the rest, so a table is never left out just because it's wide."""
+    src = t["file"] + (f", sheet '{t['sheet']}'" if t.get("sheet") else "")
+    if t.get("block"):
+        src += ", one of several tables in it" + (f", titled '{t['title']}'" if t.get("title") else "")
+    cols = t["columns"]
+    head = [f"{t['name']}  (from {src}; {t['rows']:,} rows, {len(cols)} columns)"] + ([f"  note: {t['note']}"] if t.get("note") else [])
+    if level == 0:
+        block = head + [f"  {c} {typ}" for c, typ in cols]
+        if rows:
+            block.append("  sample rows:")
+            block.append("  | " + " | ".join(c for c, _ in cols) + " |")
+            block += ["  | " + " | ".join(_md(v) for v in r) + " |" for r in rows]
+        return "\n".join(block)
+    if level == 1:
+        return "\n".join(head + [f"  {c} {typ}" for c, typ in cols])
+    hint = (f"  To find columns: SELECT column_name, data_type FROM information_schema.columns WHERE table_name = "
+            f"'{t['name']}' AND column_name ILIKE '%word%' (200 rows per query; add LIMIT/OFFSET to page through them all)")
+    text = "\n".join(head) + "\n  columns: " + ", ".join(c for c, _ in cols)
+    if budget is None or len(text) <= budget:
+        return text
+    shown, used = [], len("\n".join(head)) + len(hint) + 60
+    for c, _ in cols:
+        if used + len(c) + 2 > budget:
+            break
+        shown.append(c); used += len(c) + 2
+    return ("\n".join(head) + "\n  columns: " + ", ".join(shown) + f", … and {len(cols) - len(shown)} more\n" + hint)
+
+
 def prompt_section(tables, max_chars=20000):
-    """Schema of the chat's file tables, with a few sample rows each."""
-    lines, samples = [], {}
+    """Schema of the chat's file tables, with a few sample rows each.
+
+    Every table is listed. When they don't all fit in max_chars, the detail drops table by table: first the
+    sample rows, then the column types, then (for very wide tables) the column names past the space left,
+    with the query that lists them all.
+    """
+    samples = {}
     try:
         con = _connect(tables)
         try:
@@ -768,27 +896,28 @@ def prompt_section(tables, max_chars=20000):
             con.close()
     except Exception:
         pass
-    for t in tables:
-        src = t["file"] + (f", sheet '{t['sheet']}'" if t.get("sheet") else "")
-        if t.get("block"):
-            src += ", one of several tables in it" + (f", titled '{t['title']}'" if t.get("title") else "")
-        block = [f"{t['name']}  (from {src}; {t['rows']:,} rows)"] + ([f"  note: {t['note']}"] if t.get("note") else [])
-        block += [f"  {c} {typ}" for c, typ in t["columns"]]
-        rows = samples.get(t["name"])
-        if rows:
-            block.append("  sample rows:")
-            block.append("  | " + " | ".join(c for c, _ in t["columns"]) + " |")
-            block += ["  | " + " | ".join(_md(v) for v in r) + " |" for r in rows]
-        text = "\n".join(block)
-        if sum(len(x) for x in lines) + len(text) > max_chars:
-            lines.append(f"... {len(tables) - tables.index(t)} more table(s) not shown")
+    lines, used = [], 0
+    for i, t in enumerate(tables):
+        left = len(tables) - i - 1
+        budget = max_chars - used - left * 200      # keep a little room for each table still to come
+        if budget < 200:                            # only possible with very many tables: name the rest
+            lines.append(f"... {len(tables) - i} more table(s): " + ", ".join(
+                f"{x['name']} ({x['rows']:,} rows)" for x in tables[i:]) + ". List a table's columns with "
+                "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = '<name>'")
             break
+        rows = samples.get(t["name"])
+        text = next((x for x in (_columns_text(t, rows, lv) for lv in (0, 1, 2)) if len(x) <= budget), None)
+        if text is None:
+            text = _columns_text(t, rows, 2, budget)
         lines.append(text)
+        used += len(text) + 2
     return ("Files attached to this chat, loaded as tables you can query with SQL. This source uses DuckDB, "
             "whose SQL is close to PostgreSQL (::casts, ILIKE, date_trunc, string_agg and window functions work). "
             "Column names were normalised to lower_snake_case. Prefer SQL over reading the file text for counts, "
             "totals, averages, rankings and filters; the file text you see is only a preview.\n\n"
             + "\n\n".join(lines))
+
+
 
 
 def _read_head(path, max_lines):
@@ -838,8 +967,19 @@ def cleanup(folder):
                 pass
 
 
+PREVIEW_LINE_CHARS = 400     # a wide file's lines are cut, so its preview stays short
+PREVIEW_CHARS = 4000
+
+
 def preview(text, tables):
     """Short preview of a tabular file for the message body, instead of the full text."""
-    head = "\n".join(text.splitlines()[:PREVIEW_LINES])
+    lines = [ln if len(ln) <= PREVIEW_LINE_CHARS else ln[:PREVIEW_LINE_CHARS] + " …" for ln in text.splitlines()[:PREVIEW_LINES]]
+    head, total = [], 0
+    for ln in lines:
+        if total + len(ln) > PREVIEW_CHARS and head:
+            break
+        head.append(ln); total += len(ln) + 1
+    head = "\n".join(head)
     names = ", ".join(f"{t['name']} ({t['rows']:,} rows)" for t in tables)
-    return f"[Loaded as SQL table(s): {names}. Only the first {PREVIEW_LINES} lines are shown here; query the table for the rest.]\n{head}"
+    return (f"[Loaded as SQL table(s): {names}. Only the start of the file is shown here, long lines cut; "
+            f"query the table for the rest.]\n{head}")

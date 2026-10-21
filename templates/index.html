@@ -769,19 +769,20 @@ function decorate(el){
 
 /* ---------- attachments ---------- */
 const fmtSize = n => n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(0) + " KB" : n < 1073741824 ? (n/1048576).toFixed(1) + " MB" : (n/1073741824).toFixed(2) + " GB";
-const extOf = n => (n.split(".").pop() || "file").slice(0,4).toUpperCase();
+const extOf = n => /\.(csv|tsv)\.gz$/i.test(n) ? "GZ" : /\.parquet$/i.test(n) ? "PQ" : (n.split(".").pop() || "file").slice(0,4).toUpperCase();
 function esc(t){ const d = document.createElement("div"); d.textContent = t; return d.innerHTML; }
 
 function addFiles(files){
   for (const file of files) {
     const item = { key: uid(), file, status: "uploading" };
     const dot = file.name.lastIndexOf(".");
-    const ext = dot > 0 ? file.name.slice(dot).toLowerCase() : "";
+    const gz = (file.name.toLowerCase().match(/\.(csv|tsv)\.gz$/) || [])[0];   // one type, like the server
+    const ext = gz || (dot > 0 ? file.name.slice(dot).toLowerCase() : "");
     if (allowedExts && !allowedExts.includes(ext) && !specialNames.includes(file.name.toLowerCase())) {
-      item.status = "error"; item.error = `${ext || "No extension"} isn't an allowed type`;
+      item.status = "error"; item.error = ext === ".gz" ? "Only .csv.gz and .tsv.gz, not other .gz files" : `${ext || "No extension"} isn't an allowed type`;
     } else {
       const limit = tableExts.includes(ext) ? maxTableMB : maxMB;
-      if (file.size > limit * 1048576) { item.status = "error"; item.error = `Over the ${limit} MB limit for ${tableExts.includes(ext) ? "CSV/Excel" : "this type"}`; }
+      if (file.size > limit * 1048576) { item.status = "error"; item.error = `Over the ${limit} MB limit for ${tableExts.includes(ext) ? "data files" : "this type"}`; }
     }
     item.table = tableExts.includes(ext);
     if (file.type.startsWith("image/")) item.preview = URL.createObjectURL(file);

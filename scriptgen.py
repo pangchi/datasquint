@@ -83,8 +83,10 @@ Run:      python {_slug(title)}.py [--data FOLDER] [--out FOLDER] [--only N] [--
 import argparse
 import csv
 import datetime
+import gzip
 import os
 import re
+import shutil
 import sys
 import tempfile
 
@@ -158,7 +160,8 @@ def sheet_rows(path, sheet):
 
 
 def csv_records(path, encoding, delim):
-    with open(path, encoding=encoding or "utf-8-sig", newline="") as fh:
+    opener = gzip.open if path.lower().endswith(".gz") else open
+    with opener(path, "rt", encoding=encoding or "utf-8-sig", newline="") as fh:
         yield from enumerate(csv.reader(fh, delimiter=delim or ","))
 
 
@@ -194,6 +197,16 @@ def load_table(con, t, folder, tmp):
     if load.get("recalc"):   # Datasquint calculated this workbook's formulas with LibreOffice: do the same
         path = calculated(path, tmp)
     opts = load.get("opts")   # the read_csv settings Datasquint used for this table
+    if load["kind"] == "parquet":   # same columns, renamed the way Datasquint named them
+        con.execute(f"CREATE TABLE {name} AS SELECT {load['select']} FROM read_parquet(?)", [path])
+        n = con.execute(f"SELECT count(*) FROM {name}").fetchone()[0]
+        print(f"  loaded {t['name']}: {n:,} rows from {t['file']}")
+        return
+    if load.get("gzip") and not load.get("parts"):   # Datasquint unpacked the .gz first: do the same
+        plain = os.path.join(tmp, t["name"] + "_unpacked.csv")
+        with gzip.open(path, "rb") as fi, open(plain, "wb") as fo:
+            shutil.copyfileobj(fi, fo)
+        path = plain
     if load.get("parts"):
         out = os.path.join(tmp, t["name"] + ".csv")
         write_csv(out, block_rows(load, path))

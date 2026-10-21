@@ -72,7 +72,7 @@ SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", 20))
 # CSV/TSV/Excel go into DuckDB rather than the model's context, so they can be much larger.
-MAX_TABLE_UPLOAD_MB = int(os.getenv("MAX_TABLE_UPLOAD_MB", 200)) if filesql.available() else MAX_UPLOAD_MB
+MAX_TABLE_UPLOAD_MB = int(os.getenv("MAX_TABLE_UPLOAD_MB", 1000)) if filesql.available() else MAX_UPLOAD_MB
 MAX_TEXT_CHARS = int(os.getenv("MAX_TEXT_CHARS", 400_000))   # ~100k tokens
 MAX_SEND_CHARS = int(os.getenv("MAX_SEND_CHARS", 100_000))      # per request to the API
 PART_NOTE_TOKENS = int(os.getenv("PART_NOTE_TOKENS", 2000))     # max reply length for each part's notes
@@ -89,6 +89,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 DOC_EXTS = {".pdf", ".docx", ".xlsx", ".xlsm"}                      # converted to text on the server
 ARCHIVE_EXTS = {".zip"}                                    # extracted; members processed like uploads
+DATA_EXTS = {".parquet", ".csv.gz", ".tsv.gz"}                # loaded as SQL tables only (see filesql.py)
 TEXT_EXTS = {
     # documents / data
     ".txt", ".md", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml", ".ini", ".cfg", ".conf", ".toml", ".log",
@@ -101,8 +102,13 @@ TEXT_EXTS = {
 _env_allowed = os.getenv("ALLOWED_EXTENSIONS", "").strip()
 ALLOWED_EXTS = (
     {("." + e.strip().lower().lstrip(".")) for e in _env_allowed.split(",") if e.strip()}
-    if _env_allowed else IMAGE_EXTS | DOC_EXTS | TEXT_EXTS | ARCHIVE_EXTS
+    if _env_allowed else IMAGE_EXTS | DOC_EXTS | TEXT_EXTS | ARCHIVE_EXTS | DATA_EXTS
 )
+
+
+def upload_ext(name):
+    """An upload's type: .csv.gz and .tsv.gz count as one extension."""
+    return filesql.table_ext(name)
 SPECIAL_NAMES = {"dockerfile", "makefile"}                 # code files with no extension
 SKIP_DIRS = {"__macosx", ".git", "node_modules", "__pycache__", ".venv", "venv", ".idea", ".vscode"}
 ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -304,8 +310,10 @@ def upload():
     f = request.files.get("file")
     if not f or not f.filename:
         return jsonify(error="No file received."), 400
-    ext = os.path.splitext(f.filename)[1].lower()
+    ext = upload_ext(f.filename)
     if ext not in ALLOWED_EXTS and f.filename.lower() not in SPECIAL_NAMES:
+        if ext == ".gz":
+            return jsonify(error="Only .csv.gz and .tsv.gz files can be attached, not other .gz files."), 400
         return jsonify(error=f"{ext or 'Files without an extension'} isn't an allowed file type."), 400
     fid = uuid.uuid4().hex
     folder = os.path.join(UPLOAD_DIR, fid)
@@ -380,6 +388,11 @@ def _process_upload(f, ext, fid, folder):
         if warnings:
             meta["warnings"] = warnings[:20]
             ulog.warning("%s loaded with notes: %s", f.filename, " | ".join(warnings[:20]))
+        if not tables and ext in filesql.BINARY_TABLE_EXTS:   # Parquet / .gz have no text to fall back to
+            remove_tree(folder)
+            if filesql.off_reason():
+                table_error = "Parquet and .gz files can only be loaded as SQL tables. " + filesql.off_reason().split(",")[0] + "."
+            return jsonify(error=table_error or "This file couldn't be loaded as a table."), 400
         if tables:
             # The model gets a preview plus SQL access, so only the first lines are kept as text.
             text = filesql.head_text(folder, tables)
@@ -421,7 +434,7 @@ def ingest_generated(filename, data, mime):
     upload, so it's attached to the chat, listed in Storage and, for CSV, loaded as an SQL table.
     Returns the same JSON an upload returns; raises ValueError with the reason if it's rejected."""
     from werkzeug.datastructures import FileStorage
-    ext = os.path.splitext(filename)[1].lower()
+    ext = upload_ext(filename)
     fid = uuid.uuid4().hex
     folder = os.path.join(UPLOAD_DIR, fid)
     with _uploads_lock:

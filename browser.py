@@ -255,6 +255,24 @@ BROWSERS = {
 }
 
 
+def _mark_clean_exit(profile):
+    """Mark the profile as shut down cleanly, so the browser doesn't offer to restore (or reopen) the tabs of
+    a session that ended uncleanly, e.g. when Datasquint was stopped with the browser open."""
+    import json
+    pref = os.path.join(profile, "Default", "Preferences")
+    try:
+        with open(pref, encoding="utf-8") as fh:
+            data = json.load(fh)
+        prof = data.setdefault("profile", {})
+        if prof.get("exit_type") == "Normal" and prof.get("exited_cleanly", True):
+            return
+        prof["exit_type"], prof["exited_cleanly"] = "Normal", True
+        with open(pref, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except (OSError, ValueError):
+        pass        # new profile, or the browser changed its format: nothing to fix
+
+
 def default_kind():
     k = os.getenv("BROWSER", "edge").strip().lower()
     return k if k in BROWSERS else "edge"
@@ -292,6 +310,7 @@ class Browser:
         self.frame_path = []          # indexes of nested frames we're inside, [] = top page
         self.mode = None              # "launched" or "attached"
         self.kind = default_kind()    # "edge" or "chrome": the one running, or the next to start
+        self.hidden = set()           # handles that aren't real tabs (the New Tab page footer)
 
     # ----------------------------------------------------------------- lifecycle
     def status(self):
@@ -301,7 +320,7 @@ class Browser:
             base = {"running": True, "mode": self.mode, "browser": self.kind, "browser_name": BROWSERS[self.kind]["name"]}
             try:
                 return {**base, "url": self.driver.current_url, "title": self.driver.title,
-                        "tabs": len(self.driver.window_handles), "frame": self.frame_path}
+                        "tabs": len(self._tabs()), "frame": self.frame_path}
             except WebDriverException as e:
                 return {**base, "error": str(e).splitlines()[0]}
 
@@ -352,12 +371,16 @@ class Browser:
                     if not os.path.isabs(profile):      # relative to the app folder, not the current one
                         profile = os.path.join(os.path.dirname(os.path.abspath(__file__)), profile)
                     opts.add_argument("--user-data-dir=" + profile)
+                    _mark_clean_exit(profile)
                 for arg in filter(None, os.getenv("BROWSER_ARGS", "").split()):
                     opts.add_argument(arg)
                 if _env_bool("IGNORE_CERT_ERRORS"):
                     opts.add_argument("--ignore-certificate-errors")
                 opts.add_argument("--no-first-run")
                 opts.add_argument("--no-default-browser-check")
+                # after an unclean stop, don't show "Restore pages?" or reopen the old tabs
+                opts.add_argument("--hide-crash-restore-bubble")
+                opts.add_argument("--disable-session-crashed-bubble")
             service_args = os.getenv("DRIVER_ARGS", "").split() or None
             service = (Service(executable_path=driver_path, service_args=service_args) if driver_path
                        else Service(service_args=service_args))
@@ -366,10 +389,42 @@ class Browser:
             except WebDriverException as e:
                 raise BrowserError(_start_error(e, kind, driver_path, attach))
             self.kind = kind
+            if not attach:
+                self._fresh_tab()
             self.driver.set_page_load_timeout(float(os.getenv("PAGE_LOAD_TIMEOUT", "60")))
             self.frame_path = []
             self.mode = "attached" if attach else "launched"
             return self.status()
+
+    START_PAGES = ("chrome://newtab", "chrome://new-tab-page", "chrome://newtab-footer", "edge://newtab",
+                   "about:blank", "data:", "chrome://welcome", "edge://welcome")
+
+    def _fresh_tab(self):
+        """Work in a tab of our own. With a profile, Chrome/Edge start on the New Tab page, whose footer shows
+        up to WebDriver as a second window (chrome://newtab-footer); acting on it goes nowhere. So open a new
+        tab and close the start pages. Only for a browser Datasquint launched, never for one it attached to."""
+        d = self.driver
+        try:
+            before = list(d.window_handles)
+            d.switch_to.new_window("tab")
+            keep = d.current_window_handle
+            self.hidden = set()
+            for h in before:
+                try:
+                    d.switch_to.window(h)
+                    url = d.current_url
+                    if url.startswith("chrome://newtab-footer"):
+                        self.hidden.add(h)        # not a real tab; may outlive closing: never count or show it
+                    if url.startswith(self.START_PAGES):
+                        d.close()
+                except WebDriverException:
+                    pass        # already gone with its page
+            d.switch_to.window(keep)
+        except WebDriverException:
+            try:
+                d.switch_to.window(d.window_handles[-1])
+            except (WebDriverException, IndexError):
+                pass
 
     def stop(self):
         with self.lock:
@@ -383,6 +438,10 @@ class Browser:
                     pass
             self.driver = None
             return {"running": False}
+
+    def _tabs(self):
+        """Window handles of real tabs."""
+        return [h for h in self.driver.window_handles if h not in self.hidden]
 
     def _d(self):
         if not self.alive():
@@ -438,7 +497,7 @@ class Browser:
 
     def _handle_new_tab(self, before):
         d = self.driver
-        new = [h for h in d.window_handles if h not in before]
+        new = [h for h in d.window_handles if h not in before and h not in self.hidden]
         if new:
             d.switch_to.window(new[-1])
             self.frame_path = []
@@ -469,7 +528,7 @@ class Browser:
     def _tab_index(self):
         d = self.driver
         try:
-            return d.window_handles.index(d.current_window_handle)
+            return self._tabs().index(d.current_window_handle)
         except (ValueError, WebDriverException):
             return 0
 
@@ -505,7 +564,7 @@ class Browser:
             d = self._d()
             cur = d.current_window_handle
             out = []
-            for i, h in enumerate(d.window_handles):
+            for i, h in enumerate(self._tabs()):
                 d.switch_to.window(h)
                 out.append({"index": i, "title": d.title, "url": d.current_url, "current": h == cur})
             d.switch_to.window(cur)
@@ -634,7 +693,7 @@ class Browser:
     def switch_tab(self, index):
         with self.lock:
             d = self._d()
-            hs = d.window_handles
+            hs = self._tabs()
             try:
                 d.switch_to.window(hs[int(index)])
             except (IndexError, ValueError):
@@ -728,3 +787,30 @@ class Browser:
 
 
 browser = Browser()
+
+
+def _close_on_exit():
+    """Quit the browser Datasquint launched when Datasquint stops (Ctrl+C, a service stop), so its profile
+    folder isn't left in use by an orphaned window. Attached browsers are left open."""
+    try:
+        if browser.driver and browser.mode == "launched":
+            browser.driver.quit()
+    except Exception:
+        pass
+
+
+import atexit                  # noqa: E402
+import signal                  # noqa: E402
+atexit.register(_close_on_exit)
+if hasattr(signal, "SIGTERM"):
+    _prev_term = signal.getsignal(signal.SIGTERM)
+
+    def _on_term(signum, frame):
+        _close_on_exit()
+        if callable(_prev_term):
+            _prev_term(signum, frame)
+        raise SystemExit(0)
+    try:
+        signal.signal(signal.SIGTERM, _on_term)
+    except ValueError:         # not the main thread (e.g. imported by a WSGI worker thread): atexit still applies
+        pass

@@ -106,7 +106,7 @@ The **Send** button waits until all uploads finish. Click a chip's **✕** to re
 
 | You can attach | Up to | The AI gets |
 |---|---|---|
-| CSV, TSV, Excel (.xlsx, .xlsm) | 200 MB each | A table it can query, plus a short preview |
+| CSV, TSV, Excel (.xlsx, .xlsm), Parquet, gzipped CSV (.csv.gz) | 1000 MB each | A table it can query, plus a short preview |
 | PDF, Word, text, code, JSON | 20 MB each | The text of the file |
 | Images (JPG, PNG, GIF, WebP, BMP) | 20 MB each | The picture (if the model supports images) |
 | Zip files | 20 MB | Every supported file inside |
@@ -130,7 +130,9 @@ Good to know:
 - The first row should hold the column names.
 - Files stay available for the whole chat. Attach April's file later and ask *"compare with March"*.
 - If a chat also has a database, the AI can use both, querying each separately and combining the results.
-- A 200 MB CSV loads in about 10 seconds. Big Excel files take longer (about a minute for 4 million rows), so for very large data, save it as CSV first.
+- A 200 MB CSV loads in about 10 seconds, and a 1.5 GB one with 5 million rows in under a minute. Big Excel files take longer (about a minute for 4 million rows), so for very large data, save it as CSV first.
+- **Very big CSV? Zip it the gzip way.** A `.csv.gz` (made with 7-Zip: *Add to archive → gzip*) is usually 2–5 times smaller to upload and works exactly like the CSV. Parquet files, which many data tools export, work too.
+- **Files with hundreds or thousands of columns** work. With very wide files, say which columns you mean ("use the temperature columns"), and the AI looks them up.
 - Tell the AI what columns mean if it isn't obvious, for example *"status D means done; times are UTC"*.
 
 ## Browsing tables
@@ -186,7 +188,7 @@ To use it, put the script in a folder with the original files (same names as whe
 
 ## Removing files and freeing space
 
-Uploaded files are stored on the Datasquint server until someone deletes them, and a big CSV can take 200 MB or more. There are three ways to clean up.
+Uploaded files are stored on the Datasquint server until someone deletes them, and a big CSV can take a gigabyte or more. There are three ways to clean up.
 
 **Remove a file from a chat.** Hover over a file in a message you've sent and click its **✕**. You'll be asked to confirm:
 
@@ -278,7 +280,7 @@ Only attach files and connect data you're allowed to send to the AI provider you
 
 **A file's chip says "⚠ 2 notes".** It loaded, but something needed special handling, such as a sheet that couldn't be read or columns loaded as text. Hover over the chip to see what.
 
-**"Over the 200 MB limit".** Split the file, or ask your administrator to raise the limit.
+**"Over the 1000 MB limit".** Compress it as `.csv.gz` (often small enough then), split the file, or ask your administrator to raise the limit.
 
 **The answer says it can't access the database.** Click the database chip and tick the database for this chat.
 

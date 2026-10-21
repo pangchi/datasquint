@@ -8,6 +8,21 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.16.0 — 2026-10-21
+
+### Fixed
+- **Wide files were invisible to the model.** When one table's columns and sample rows took more than the 20,000 characters allowed for the file tables, that table was left out entirely: a 600-column CSV loaded fine, but the model was told only "1 more table(s) not shown" and couldn't query it. Every table is now listed. When they don't fit, the detail drops table by table (sample rows, then column types, then, for tables with thousands of columns, the names past the space left), and the model is told how to look columns up with SQL.
+- The file preview the model gets with each data file is limited to short lines (it was about 60,000 characters for a 3,000-column CSV).
+- **Browser: the model could end up working in an invisible "tab".** With a profile folder, current Chrome starts on its New Tab page, whose footer appears to Selenium as a second window (`chrome://newtab-footer`); depending on which one the driver picked, clicks and reading went to the footer instead of the page. A browser Datasquint launches now opens its own tab and closes the start page, and the footer never counts as a tab (tab count, `tabs`, `switch_tab`). Browsers you attach to are left as they are.
+- **Browser left running after Datasquint stopped**, keeping its profile folder in use so the next start failed (*Another Chrome window is using its profile folder*). Stopping Datasquint (Ctrl+C or a service stop) now closes the browser it launched. After an unclean stop, the profile is marked as shut down cleanly before the next start, so the browser doesn't offer to restore the old tabs.
+
+### Added
+- **`.csv.gz`, `.tsv.gz` and `.parquet` uploads**, loaded as SQL tables like CSV. Gzipped files are unpacked on the server (up to `MAX_UNCOMPRESSED_MB`, default 10,000 MB) and then handled exactly like a CSV, including Windows-encoded text and several tables in one file; they are typically 2–5 times smaller to upload. Parquet keeps its column types; column names are normalised like CSV ones. Python scripts exported from a chat rebuild these tables from the original files. Other `.gz` files are refused.
+
+### Changed
+- **`MAX_TABLE_UPLOAD_MB` defaults to 1000** (was 200). Measured on a 2-core, 8 GB machine: a 1.46 GB, 5-million-row CSV loads in about 40 s (about 50 s as a 680 MB `.csv.gz`), uses about 2.4 GB of memory while loading, and answers GROUP BY queries in under 0.1 s. Behind nginx, raise `client_max_body_size` to match and keep `proxy_read_timeout` at 300 s or more (README → Running in production).
+- README: guidance for very large data (memory, disk, `FILES_SQL_MEMORY`, when to use PostgreSQL instead).
+
 ## 2.15.0 — 2026-10-21
 
 ### Added
