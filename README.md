@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.16.0** · [Changelog](CHANGELOG.md)
+**Version 2.16.1** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -551,6 +551,8 @@ First look in the [error log](#error-log) for lines from the time it happened; t
 | Chip is red / "Database off" | Click it to tick databases or check which one is unreachable. |
 | The model says it has no database access | The database isn't ticked for this chat. |
 | *Over the 1000 MB limit…* / *larger than the upload limit* | Compress it to `.csv.gz` (2–5 × smaller), or raise `MAX_TABLE_UPLOAD_MB` (data files) or `MAX_UPLOAD_MB` (other files). Behind nginx, also raise `client_max_body_size`. |
+| *Can't use port 5000 … Only one usage of each socket address* right after **Update** (Windows, 2.16.0 and earlier) | The restarted Datasquint gave up while Windows was still closing the browser's old connections. Start it again with `python app.py` (if it still says the port is in use, wait a minute or close the Datasquint browser tab first). Fixed in 2.16.1, so later updates restart by themselves. |
+| *Can't use port … another program (or another Datasquint) is already listening on it* | Something really is using the port: a second Datasquint window, or another program. Close it, or set a different `PORT`. |
 | *It unpacks to more than … MB* | The `.csv.gz` is bigger than `MAX_UNCOMPRESSED_MB` once unpacked. Split it or raise the limit. |
 | *This Parquet file couldn't be read* | The file is incomplete (an interrupted copy) or not Parquet. Export it again. |
 | The model ignores columns of a very wide file | With thousands of columns it only sees the first ones by name; tell it which columns you mean, or ask it to look them up (it knows the query). |

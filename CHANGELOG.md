@@ -8,6 +8,12 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.16.1 — 2026-10-22
+
+### Fixed
+- **Update didn't restart on Windows** (*Can't use port 5000 … Only one usage of each socket address*), and the page waited for a Datasquint that never came back. Before starting, Datasquint test-bound its port to give a clear message if something else used it; on Windows that test was stricter than the web server itself, and failed while Windows was still closing the browser's connections to the old process (which can take up to 4 minutes). It now checks whether anything is actually *listening* on the port, so leftover connections don't count, while a second Datasquint or another program on the same port is still reported, with a clearer message. After an update it keeps trying for 30 seconds.
+- **The browser Datasquint launched kept running after an update restart**, holding its profile folder, so the browser couldn't be started again until it was closed by hand. The restart now closes it first.
+
 ## 2.16.0 — 2026-10-21
 
 ### Fixed

@@ -1491,20 +1491,36 @@ if __name__ == "__main__":
     # Fail early with a clear message if something else already uses the port. Right after an update the
     # old process may still be letting go of it, so keep trying for a while then.
     import socket
-    tries = 30 if os.getenv("DATASQUINT_RESTARTED") == "1" else 1
+
+    def port_problem():
+        """Why the port can't be used, or None. "In use" means something is listening: connections left in
+        TIME_WAIT by the old process (common on Windows right after an update, for up to 4 minutes) don't
+        count, since the web server binds past them."""
+        target = "::1" if host == "::" else "127.0.0.1" if host == "0.0.0.0" else host
+        try:
+            with socket.create_connection((target, port), timeout=0.5):
+                return "another program (or another Datasquint) is already listening on it"
+        except OSError:
+            pass                  # nothing listening: good
+        if os.name != "nt":       # also catch ports we may not use (below 1024) or addresses not on this machine
+            with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)   # like the web server itself
+                try:
+                    probe.bind((host, port))
+                except OSError as e:
+                    return e.strerror or str(e)
+        return None
+
+    tries = 60 if os.getenv("DATASQUINT_RESTARTED") == "1" else 1
     for attempt in range(tries):
-        with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as probe:
-            if os.name != "nt":   # like the web server itself: ignore connections still closing from a restart
-                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                probe.bind((host, port))
-                break
-            except OSError as e:
-                if attempt + 1 < tries:
-                    time.sleep(0.5)
-                    continue
-                sys.exit(f"Can't use port {port} on {host}: {e.strerror or e}. Another program (or another Datasquint) "
-                         f"may be using it. Set a different PORT in .env, e.g. PORT={port + 1}.")
+        problem = port_problem()
+        if not problem:
+            break
+        if attempt + 1 < tries:
+            time.sleep(0.5)
+            continue
+        sys.exit(f"Can't use port {port} on {host}: {problem}. Close the other program, or set a different PORT "
+                 f"in .env, e.g. PORT={port + 1}.")
     updater.SELF_RESTART = not debug   # in debug mode Flask's reloader picks up the new code by itself
     print(f" * Datasquint {VERSION}" + (" (restarted after update)" if os.getenv("DATASQUINT_RESTARTED") == "1" else ""))
     print(f" * SQL over CSV/TSV/Excel files: {filesql.status()}"

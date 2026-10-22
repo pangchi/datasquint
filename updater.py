@@ -286,6 +286,14 @@ def restart_soon(delay=1.0):
                 h.flush()
             except Exception:
                 pass
+        # A restart skips normal shutdown, so close the browser Datasquint launched (if any): left running,
+        # it keeps its profile folder in use and the new process couldn't start a browser.
+        b = sys.modules.get("browser")
+        if b is not None and hasattr(b, "_close_on_exit"):
+            try:
+                b._close_on_exit()
+            except Exception:
+                pass
         env = dict(os.environ, DATASQUINT_RESTARTED="1")
         args = [sys.executable] + sys.argv
         if os.name == "nt":       # Windows: start the new process, then leave so it can take the port
