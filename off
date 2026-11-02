@@ -1,0 +1,6 @@
+2026-11-02 11:03:15,469 WARNING datasquint.web: AI server http://127.0.0.1:8082/v1: unreachable (Can't reach the AI server at http://127.0.0.1:8082/v1 (Connection refused).)
+2026-11-02 11:03:15,584 WARNING datasquint.web: AI server http://no-such-ai-server.invalid:8000/v1: unreachable (Can't reach the AI server at http://no-such-ai-server.invalid:8000/v1 (Name or service not known).)
+2026-11-02 11:03:20,707 WARNING datasquint.web: AI server http://10.255.255.1:8000/v1: unreachable (The AI server at http://10.255.255.1:8000/v1 didn't answer in time.)
+2026-11-02 11:03:29,832 INFO    datasquint.web: AI server http://127.0.0.1:8082/v1: ok
+2026-11-02 11:03:33,211 WARNING datasquint.web: AI server http://127.0.0.1:8082/v1: auth (The AI server at http://127.0.0.1:8082/v1 rejected the API key (OPENAI_API_KEY in .env).)
+2026-11-02 11:03:36,357 INFO    datasquint.web: AI server http://127.0.0.1:8082/v1: ok

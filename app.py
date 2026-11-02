@@ -82,6 +82,66 @@ ZIP_MAX_IMAGES = int(os.getenv("ZIP_MAX_IMAGES", 10))
 
 client = openai.OpenAI(api_key=API_KEY, base_url=BASE_URL)
 app = Flask(__name__)
+
+# ---------------------------------------------------------------- is the AI server reachable?
+AI_CHECK_TIMEOUT = float(os.getenv("AI_CHECK_TIMEOUT", 5))
+_probe_client = openai.OpenAI(api_key=API_KEY, base_url=BASE_URL, timeout=AI_CHECK_TIMEOUT, max_retries=0)
+_ai_lock = threading.Lock()
+_ai_state = {"checked": 0.0, "result": None}
+
+
+def _root_cause(e):
+    """The innermost exception text: 'Connection refused', 'Name or service not known', a TLS error…"""
+    seen, cur = set(), e
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        nxt = cur.__cause__ or cur.__context__
+        if nxt is None:
+            break
+        cur = nxt
+    text = str(cur).strip() or type(cur).__name__
+    text = re.sub(r"^\[Errno -?\d+\]\s*", "", text)
+    return text[:200]
+
+
+def ai_problem(e):
+    """Plain words for an error talking to the AI server, and whether it means the server is unreachable."""
+    if isinstance(e, openai.APITimeoutError):
+        return f"The AI server at {BASE_URL} didn't answer in time.", True
+    if isinstance(e, openai.APIConnectionError):
+        return f"Can't reach the AI server at {BASE_URL} ({_root_cause(e)}).", True
+    if isinstance(e, openai.AuthenticationError):
+        return f"The AI server at {BASE_URL} rejected the API key (OPENAI_API_KEY in .env).", False
+    return None, False
+
+
+def ai_status(force=False):
+    """Check the AI server with a quick request (cached 10 s). States: ok, unreachable, auth."""
+    with _ai_lock:
+        if not force and _ai_state["result"] and time.time() - _ai_state["checked"] < 10:
+            return _ai_state["result"]
+        t0 = time.time()
+        res = {"base_url": BASE_URL, "model": DEFAULT_MODEL}
+        try:
+            n = len(list(_probe_client.models.list()))
+            res.update(state="ok", models=n)
+        except openai.APIStatusError as e:   # it answered: reachable, even if it doesn't list models (404 etc.)
+            msg, _ = ai_problem(e)
+            res.update(state="auth", message=msg) if isinstance(e, openai.AuthenticationError) else res.update(state="ok")
+        except Exception as e:
+            msg, down = ai_problem(e)
+            res["reason"] = (f"no answer within {AI_CHECK_TIMEOUT:g} s" if isinstance(e, openai.APITimeoutError)
+                             else _root_cause(e))
+            res.update(state="unreachable" if down else "error",
+                       message=msg or f"Couldn't check the AI server at {BASE_URL}: {_root_cause(e)}")
+        res["ms"] = int((time.time() - t0) * 1000)
+        res["checked_at"] = time.strftime("%H:%M:%S")
+        prev = (_ai_state["result"] or {}).get("state")
+        if res["state"] != prev:
+            (log.info if res["state"] == "ok" else log.warning)(
+                "AI server %s: %s%s", BASE_URL, res["state"], f" ({res.get('message')})" if res.get("message") else "")
+        _ai_state.update(checked=time.time(), result=res)
+        return res
 app.config["MAX_CONTENT_LENGTH"] = max(MAX_UPLOAD_MB, MAX_TABLE_UPLOAD_MB) * 1024 * 1024 + 64 * 1024  # + form overhead
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -843,7 +903,14 @@ def config():
                    special_names=sorted(SPECIAL_NAMES),
                    browser={"enabled": webtools.ENABLED, "available": webtools.available(), "error": webtools.off_reason(),
                             "read_actions": sorted(webtools.READ_ACTIONS), "vision": webtools.VISION,
-                            "auto_click": os.getenv("AUTO_CLICK", "0") == "1"})
+                            "auto_click": os.getenv("AUTO_CLICK", "0") == "1",
+                            "max_steps": max(0, int(os.getenv("BROWSER_MAX_STEPS", "15") or 15))})
+
+
+@app.get("/api/ai/status")
+def ai_status_route():
+    """Whether the AI server answers: {state: ok|unreachable|auth|error, message, base_url, model, ms, checked_at}."""
+    return jsonify(ai_status(force=request.args.get("refresh") == "1"))
 
 
 @app.get("/api/models")
@@ -1470,7 +1537,13 @@ def chat():
             known = isinstance(e, openai.APIError)
             clog.error("Reply from %s failed after %.1f s (%s chars sent): %s: %s", model, time.time() - t0,
                        f"{size:,}", type(e).__name__, e, exc_info=not known)
-            yield ndjson({"error": f"{type(e).__name__}: {e}"})
+            msg, down = ai_problem(e)
+            if msg:   # the server is down or refused the key: say so plainly, and let the page show its notice
+                _ai_state["checked"] = 0
+                yield ndjson({"error": msg + (" Check that it's running and that OPENAI_BASE_URL in .env is right."
+                                              if down else ""), "ai_down": down, "ai_auth": not down})
+            else:
+                yield ndjson({"error": f"{type(e).__name__}: {e}"})
 
     return Response(
         stream_with_context(generate()),
@@ -1532,6 +1605,14 @@ if __name__ == "__main__":
     print(f" * Open http://{shown}:{port} in your browser")
     print(f" * Error log: {LOG_PATH or 'console only (the log file could not be opened)'}")
     print(f" * Browser (web pages in Edge/Chrome): {webtools.status_line()}")
+
+    def _startup_ai_check():   # in the background: a server that's down mustn't hold up the start
+        r = ai_status(force=True)
+        if r["state"] == "ok":
+            print(f" * AI server: reachable ({BASE_URL}, model {DEFAULT_MODEL})", flush=True)
+        else:
+            print(f" * WARNING: {r['message']} Chats will fail until it's fixed; the page shows a notice.", flush=True)
+    threading.Thread(target=_startup_ai_check, daemon=True, name="ai-check").start()
     print(" * Updates from GitHub: " + {"on": f"on ({updater.REPO}, {updater.BRANCH}); install from Settings → Updates",
                                         "check": f"check only ({updater.REPO}, {updater.BRANCH})",
                                         "off": "off (UPDATES=off)"}[updater.MODE])

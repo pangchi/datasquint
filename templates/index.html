@@ -235,6 +235,15 @@ textarea{flex:1;border:0;outline:0;resize:none;background:none;max-height:40vh;p
 .runsql:disabled{opacity:.5;cursor:default}
 .msg.sql{align-items:stretch}
 /* browser source (webtools.py): header switch + menu, and result cards for ```action blocks */
+/* AI server unreachable: notice under the header */
+#aiBanner{display:flex;align-items:center;gap:10px;margin:8px 14px 0;padding:8px 12px;border:1px solid var(--danger);border-radius:8px;
+  background:color-mix(in srgb,var(--danger) 9%,var(--panel));font-size:13.5px;line-height:1.4}
+#aiBanner[hidden]{display:none}
+#aiBanner svg{color:var(--danger);flex:none}
+#aiBanner .txt{flex:1;min-width:0}
+#aiBanner b{color:var(--danger)}
+#aiBanner small{color:var(--muted);white-space:nowrap}
+#aiBanner .btn{flex:none;padding:4px 12px}
 .brwrap{position:relative}
 .brwrap[hidden],#settings label[hidden],#settings div[hidden]{display:none!important}
 #brToggle{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;color:var(--muted)}
@@ -484,6 +493,11 @@ dialog textarea{min-height:110px;resize:vertical}
     </div>
   </header>
   <div id="toast" role="status" aria-live="polite" hidden></div>
+  <div id="aiBanner" role="alert" hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0zM12 9v4M12 17h.01"/></svg>
+    <div class="txt"><b id="aiTitle"></b> <span id="aiMsg"></span> <small id="aiWhen"></small></div>
+    <button class="btn" id="aiRetry" type="button">Retry</button>
+  </div>
   <div id="scroll"><div id="messages"></div></div>
   <div class="composer">
     <div id="pending"></div>
@@ -622,7 +636,7 @@ dialog textarea{min-height:110px;resize:vertical}
   <label class="check"><input type="checkbox" id="autoRun"> Run the model's SQL queries automatically</label>
   <div style="font-size:12px;color:var(--muted);margin-top:4px">Queries are always read-only. Auto-run stops after 5 queries in a row so you can check in.</div>
   <label class="check"><input type="checkbox" id="autoClick"> Auto-click: let the model click, type and navigate in the browser without asking</label>
-  <div style="font-size:12px;color:var(--muted);margin-top:4px">Reading the page never asks. Off: each click, typing or page change shows a Run button first. Browser steps stop after 15 in a row so you can check in.</div>
+  <div style="font-size:12px;color:var(--muted);margin-top:4px">Reading the page never asks. Off: each click, typing or page change shows an Allow button first. <span id="brStepsNote"></span></div>
   <label class="check"><input type="checkbox" id="excelNote"> Remind me that Excel data may not be exact (CSV preferred)</label>
   <div id="updWrap" hidden>
     <label>Updates</label>
@@ -681,7 +695,7 @@ let editing = null;   // id of the connection open in the manager, or null for a
 const SQL_LANGS = ["sql","pgsql","postgres","postgresql","plpgsql"];
 const AUTO_RUN_LIMIT = 5;
 const ACTION_LANGS = ["action"];
-const BROWSER_STEP_LIMIT = 15;
+let BROWSER_STEP_LIMIT = 15;   // BROWSER_MAX_STEPS in .env; 0 = never pause
 let brCfg = { available: false, read_actions: [] }, brStatus = { running: false };
 let allowedExts = null, specialNames = [];
 
@@ -953,14 +967,14 @@ function addRunButtons(bubble){
     const b = document.createElement("button"); b.className = "runsql"; b.type = "button";
     b.textContent = isReadAction(code.innerText) ? "Run" : "Allow";
     b.title = isReadAction(code.innerText) ? "Run this browser step" : "Let the model do this in the browser";
-    b.onclick = () => { if (isBusy()) return; b.disabled = true; b.textContent = "Running…"; runActions([code.innerText.trim()]); };
+    b.onclick = () => { if (isBusy()) return; b.disabled = true; b.textContent = "Running…"; runActions([code.innerText.trim()], cur(), true); };
     codeBar(pre).prepend(b);
   });
   if (!canQuery()) return;
   sqlBlocks(bubble).forEach(code => {
     const pre = code.closest("pre"); if (pre.querySelector(".runsql")) return;
     const b = document.createElement("button"); b.className = "runsql"; b.type = "button"; b.textContent = "Run";
-    b.onclick = () => { if (isBusy()) return; b.disabled = true; b.textContent = "Running…"; runAndSend([code.innerText.trim()]); };
+    b.onclick = () => { if (isBusy()) return; b.disabled = true; b.textContent = "Running…"; runAndSend([code.innerText.trim()], cur(), true); };
     codeBar(pre).prepend(b);
   });
 }
@@ -976,7 +990,7 @@ function msgEl(m, i){
     cp.onclick = () => { navigator.clipboard.writeText(m.results.filter(r => !r.error).map(toCSV).join("\n\n")); cp.textContent = "Copied"; setTimeout(()=>cp.textContent="Copy CSV",1200); };
     tools.appendChild(cp);
     const rr = document.createElement("button"); rr.textContent = "Run again";
-    rr.onclick = () => { if (isBusy()) return; cur().messages = cur().messages.slice(0, i); runAndSend(m.results.map(r => r.sql)); };
+    rr.onclick = () => { if (isBusy()) return; cur().messages = cur().messages.slice(0, i); runAndSend(m.results.map(r => r.sql), cur(), true); };
     tools.appendChild(rr);
     wrap.appendChild(tools);
     return wrap;
@@ -1126,7 +1140,8 @@ async function send(text, atts, c = cur()){
         if (ev.status) job.status = ev.status;
         if (ev.parts) reply.parts = ev.parts;
         if (ev.usage) reply.usage = ev.usage;
-        if (ev.error) { reply.content += (reply.content ? "\n\n" : "") + "**Request failed.** " + ev.error; reply.error = true; }
+        if (ev.error) { reply.content += (reply.content ? "\n\n" : "") + "**Request failed.** " + ev.error; reply.error = true;
+          if (ev.ai_down || ev.ai_auth) checkAI(true); }
       }
       if (!pending) { pending = true; requestAnimationFrame(() => { pending = false; paintLive(c); }); }
     }
@@ -1159,27 +1174,35 @@ function maybeAutoRun(c, reply){
     const acts = extractActions(reply.content).slice(0, 1);
     if (acts.length) {
       if (!isReadAction(acts[0]) && !state.settings.autoClick) return;   // waits for Allow
-      let streak = 0;
-      for (let k = c.messages.length - 1; k >= 0; k--) {
-        const m = c.messages[k];
-        if (m.kind === "web" || m.kind === "sql") streak++; else if (m.role === "user") break;
+      const streak = autoStreak(c, m => m.kind === "web" || m.kind === "sql");
+      if (BROWSER_STEP_LIMIT > 0 && streak >= BROWSER_STEP_LIMIT) {
+        notify(`Paused after ${BROWSER_STEP_LIMIT} browser steps in a row. Press Allow (or Run) on the step to let it do another ${BROWSER_STEP_LIMIT}.`);
+        return;
       }
-      if (streak >= BROWSER_STEP_LIMIT) { notify(`Paused after ${BROWSER_STEP_LIMIT} browser steps in a row. Press Run/Allow to go on.`); return; }
       runActions(acts, c);
       return;
     }
   }
   if (!state.settings.autoRun || !canQuery(c)) return;
   const sqls = extractSQL(reply.content); if (!sqls.length) return;
-  let streak = 0;   // query rounds since the user last typed something
-  for (let k = c.messages.length - 1; k >= 0; k--) {
-    const m = c.messages[k];
-    if (m.kind === "sql") streak++; else if (m.role === "user") break;
+  if (autoStreak(c, m => m.kind === "sql") >= AUTO_RUN_LIMIT) {
+    notify(`Paused after ${AUTO_RUN_LIMIT} queries in a row. Press Run on the query to let it do another ${AUTO_RUN_LIMIT}.`);
+    return;
   }
-  if (streak >= AUTO_RUN_LIMIT) return;
   runAndSend(sqls, c);
 }
-async function runAndSend(sqls, c = cur()){
+/* Steps run automatically in a row: counted back to the last message the user typed, or the last step they
+   started by pressing Run/Allow. So after a pause, one press lets it carry on for another full run. */
+function autoStreak(c, counts){
+  let n = 0;
+  for (let k = c.messages.length - 1; k >= 0; k--) {
+    const m = c.messages[k];
+    if (m.manual) break;
+    if (counts(m)) n++; else if (m.role === "user") break;
+  }
+  return n;
+}
+async function runAndSend(sqls, c = cur(), manual = false){
   if (!c || isBusy(c)) return;
   const job = { ctrl: new AbortController(), reply: null, status: "Running query…" };
   jobs.set(c.id, job);
@@ -1206,12 +1229,41 @@ async function runAndSend(sqls, c = cur()){
     "\n\nContinue: answer from these results, or fix and rerun the query if it failed.";
   const stored = results.map(r => ({ sql: r.sql, error: r.error, db_name: r.db_name, columns: r.columns, row_count: r.row_count,
     truncated: r.truncated, ms: r.ms, rows: (r.rows || []).slice(0, 100), rows_stored: Math.min(100, r.rows?.length || 0) }));
-  c.messages.push({ role: "user", kind: "sql", content, results: stored });
+  c.messages.push({ role: "user", kind: "sql", content, results: stored, ...(manual ? { manual: true } : {}) });
   send(null, null, c);
 }
 
+/* ---------- AI server reachable? ---------- */
+// Checked when the page opens, every 15 s while it's down, every 2 min while it's up, and after a reply fails.
+let aiTimer = null, aiLast = null;
+async function checkAI(refresh){
+  clearTimeout(aiTimer);
+  const r = await api("/api/ai/status" + (refresh ? "?refresh=1" : ""));
+  if (r.state) showAI(r);           // no state: Datasquint itself didn't answer; leave the notice as it is
+  aiTimer = setTimeout(() => checkAI(), r.state && r.state !== "ok" ? 15000 : 120000);
+}
+function showAI(r){
+  const down = r.state !== "ok";
+  $("#aiBanner").hidden = !down;
+  if (down) {
+    $("#aiTitle").textContent = r.state === "auth" ? "The AI server rejected the API key."
+      : r.state === "unreachable" ? "The AI server can't be reached:" : "The AI server didn't answer properly:";
+    $("#aiMsg").textContent = r.state === "auth" ? `Check OPENAI_API_KEY in .env (server ${r.base_url}). `
+      : r.state === "unreachable" ? `${r.base_url} (${r.reason}). Check that it's running and that OPENAI_BASE_URL in .env is right; questions will fail until it's back. `
+      : `${r.message} `;
+    $("#aiWhen").textContent = r.checked_at ? `Checked ${r.checked_at}` : "";
+  }
+  if (aiLast && aiLast !== "ok" && !down) notify("The AI server is reachable again.");
+  aiLast = r.state;
+}
+$("#aiRetry").onclick = async () => {
+  const b = $("#aiRetry"); b.disabled = true; b.textContent = "Checking…";
+  await checkAI(true);
+  b.disabled = false; b.textContent = "Retry";
+};
+
 /* ---------- browser steps ---------- */
-async function runActions(acts, c = cur()){
+async function runActions(acts, c = cur(), manual = false){
   if (!c || isBusy(c)) return;
   const job = { ctrl: new AbortController(), reply: null, status: "Working in the browser…" };
   jobs.set(c.id, job);
@@ -1243,6 +1295,7 @@ async function runActions(acts, c = cur()){
     results: results.map(r => ({ title: String(r.title || ""), error: r.error ? String(r.error) : undefined,
       text: String(r.text || "").slice(0, 4000), host })) };
   if (atts.length) m.attachments = atts;
+  if (manual) m.manual = true;
   c.messages.push(m);
   send(null, null, c);
 }
@@ -2051,6 +2104,7 @@ function cleanChat(c){
       if (atts.length) out.attachments = atts;
     }
     if (m.kind === "sql" && Array.isArray(m.results)) { out.kind = "sql"; out.results = m.results.map(cleanResult); }
+    if ((m.kind === "sql" || m.kind === "web") && m.manual) out.manual = true;
     if (m.kind === "web" && Array.isArray(m.results)) { out.kind = "web"; out.results = m.results.slice(0, 20).map(r => ({
       title: String(r?.title || "").slice(0, 300), error: r?.error ? String(r.error).slice(0, 2000) : undefined,
       text: String(r?.text || "").slice(0, 4000), host: String(r?.host || "").slice(0, 200) })); }
@@ -2411,7 +2465,7 @@ let theme = loadTheme(), themeDraft = null;
 applyTheme(theme);
 document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, mode: b.dataset.mode }; applyTheme(themeDraft); });
 document.querySelectorAll("#accentPick .swatch").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, accent: b.dataset.accent }; applyTheme(themeDraft); });
-$("#openSettings").onclick = () => { themeDraft = { ...theme }; applyTheme(themeDraft); $("#sysPrompt").value = state.settings.system; $("#temp").value = state.settings.temperature; $("#autoRun").checked = !!state.settings.autoRun; $("#autoClick").checked = !!state.settings.autoClick; $("#excelNote").checked = !state.settings.hideExcelNote; dlg.showModal(); loadUsage(); loadUpdate(); };
+$("#openSettings").onclick = () => { themeDraft = { ...theme }; applyTheme(themeDraft); $("#sysPrompt").value = state.settings.system; $("#temp").value = state.settings.temperature; $("#autoRun").checked = !!state.settings.autoRun; $("#autoClick").checked = !!state.settings.autoClick; $("#brStepsNote").textContent = BROWSER_STEP_LIMIT ? `Browser steps pause after ${BROWSER_STEP_LIMIT} in a row so you can check in; one press of Allow lets it do another ${BROWSER_STEP_LIMIT}.` : "Browser steps never pause (BROWSER_MAX_STEPS=0)."; $("#excelNote").checked = !state.settings.hideExcelNote; dlg.showModal(); loadUsage(); loadUpdate(); };
 /* Updates from GitHub (UPDATES in .env: on, check or off) */
 let upd = null;
 function showUpdate(u){
@@ -2540,7 +2594,9 @@ $("#saveSettings").onclick = () => {
     $("#attachBtn").title = "Attach files: images, PDF, Word, Excel, CSV, JSON, text, code and zip";
   }
   state.settings ||= { system: cfg.system_prompt || "", temperature: 0.7 };
+  checkAI();
   if (cfg.browser) brCfg = cfg.browser;
+  if (Number.isInteger(brCfg.max_steps) && brCfg.max_steps >= 0) BROWSER_STEP_LIMIT = brCfg.max_steps;
   if (state.settings.autoClick === undefined) state.settings.autoClick = !!brCfg.auto_click;
   if (brCfg.enabled === false) {   // BROWSER_ENABLED=0: no Browser chip, no Auto-click setting, no polling
     $(".brwrap").hidden = true;

@@ -166,7 +166,7 @@ Some data only lives on web pages: an MES or traceability screen, a machine's we
 - *"Open LOT-4471 and tell me the reflow peak."*
 - *"Set the range to Last 7 days and save the alarm table."*
 
-When the AI wants to click, type or open a page, it shows the step with an **Allow** button. Nothing happens until you press it. Reading the page never asks. If you trust it on these pages, turn on **Settings → Auto-click** and it works through the steps by itself. It still stops after 15 steps in a row so you can check in. **■ stop** (or Esc) stops it, even halfway through a long table.
+When the AI wants to click, type or open a page, it shows the step with an **Allow** button. Nothing happens until you press it. Reading the page never asks. If you trust it on these pages, turn on **Settings → Auto-click** and it works through the steps by itself. It still pauses after 15 steps in a row so you can check in; press **Allow** (or **Run**) on the waiting step and it carries on for another 15. **■ stop** (or Esc) stops it, even halfway through a long table.
 
 **Tables become files you can query.** When the AI saves a table from a page, it appears in the chat as a CSV file, for example `lots.csv`. From then on it's like a CSV you attached yourself. Ask *"how many per status?"* and the answer is computed exactly with SQL. You can also see it in **Tables**, download it, or remove it.
 
@@ -247,7 +247,7 @@ Usually your administrator sets these up. To add one yourself: **Database → + 
 | System prompt | Standing instructions for every chat, such as *"Answer briefly. Use Singapore dates."* |
 | Temperature | 0 gives focused, repeatable answers; higher values give more varied wording. 0.2–0.7 suits data questions. |
 | Run SQL automatically | Runs the AI's queries without pressing **Run**. It stops after 5 queries in a row so a confused AI can't loop. |
-| Auto-click | Lets the AI click, type and open pages in the browser without pressing **Allow**. It stops after 15 browser steps in a row. Reading pages never asks. |
+| Auto-click | Lets the AI click, type and open pages in the browser without pressing **Allow**. It pauses after 15 browser steps in a row; one press of **Allow** lets it do another 15. Reading pages never asks. |
 | Token usage | How many tokens the AI has used since the last reset, per model: *in* is what was sent to the AI, *out* is what it wrote. Also shows this chat's total. **Reset counters** starts again from zero. The counts are for everyone using this Datasquint, not just you. |
 
 **Updates.** When a newer Datasquint is out, *Update available* appears under the version number at the bottom of the sidebar. Click it (or open **Settings → Updates**) to see what's new and press **Update**. Your settings, connections, files, token counts and chats are kept. Datasquint restarts and the page reloads by itself. On a shared server your administrator may have turned this off, in which case it only tells you an update exists.
@@ -273,6 +273,8 @@ Appearance and colour are remembered in this browser only, so each person (and e
 Only attach files and connect data you're allowed to send to the AI provider your organisation uses.
 
 ## Common questions
+
+**A red notice says "The AI server can't be reached".** Datasquint is working, but the AI it uses isn't answering, so questions will fail. The notice shows the reason in brackets. Usually the AI server (for example Ollama or LM Studio) isn't running, or the computer it runs on is off or out of the network. Start it, or ask your administrator, then press **Retry**. The notice goes away by itself once the AI answers again. If it says the API key was rejected, the key in the settings file needs fixing.
 
 **My chats disappeared.** You're probably at a different address, in a private window, or browsing data was cleared. Try the address you used before, or import your last export.
 

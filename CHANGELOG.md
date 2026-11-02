@@ -8,6 +8,22 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.17.0 — 2026-11-02
+
+### Added
+- **Notice when the AI server can't be reached.** A red notice under the header says so as soon as the page opens, with the server address and the reason (*Connection refused*, *Name or service not known*, *no answer within 5 s*), what to check, and a **Retry** button. It is checked again every 15 s while the server is down (every 2 minutes while it's up) and right after a reply fails, and it disappears by itself, with a short *reachable again* message, when the server answers. A rejected API key gets its own notice.
+- Replies that fail for those reasons now say so in plain words (*Can't reach the AI server at … (Connection refused). Check that it's running and that OPENAI_BASE_URL in .env is right.*) instead of *APIConnectionError: Connection error.*
+- The start-up banner reports the AI server: *AI server: reachable (…)*, or a warning with the reason. The check runs in the background, so a server that's down doesn't slow the start.
+- `GET /api/ai/status`; setting `AI_CHECK_TIMEOUT` (default 5 s). A server that answers but doesn't list its models counts as reachable.
+
+## 2.16.2 — 2026-10-23
+
+### Fixed
+- **After the 15-step pause, every browser step needed a click.** Steps in a row were counted back to the last message you typed, so pressing Allow or Run after the pause didn't reset the count, and each following step paused again. A press now starts a new run: it carries on automatically for another 15 steps. The same applied to SQL auto-run after 5 queries in a row, also fixed. The pause notice says how to continue.
+
+### Added
+- `BROWSER_MAX_STEPS` (default 15): browser steps in a row before the pause; `0` never pauses. Settings shows the value.
+
 ## 2.16.1 — 2026-10-22
 
 ### Fixed

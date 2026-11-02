@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.16.1** · [Changelog](CHANGELOG.md)
+**Version 2.17.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -302,7 +302,7 @@ To use a browser you started yourself, start it with `--remote-debugging-port`, 
 
 - Actions that only **read** (`snapshot`, `extract_table`, `extract_text`, `find`, `scroll`, `frame`, `tabs`, `switch_tab`, `wait`) run straight away.
 - Actions that **change** the page (`navigate`, `click`, `type`, `select`, `press`, `back`, `paginate`, `click_all`) show **Allow** first. **Settings → Auto-click** runs them without asking (default from `AUTO_CLICK`).
-- The result goes back to the model, which takes the next step or answers. Steps pause after 15 in a row so you can check in. **Stop** (or Esc) also stops a running `paginate`/`click_all` at the next page.
+- The result goes back to the model, which takes the next step or answers. Steps pause after 15 in a row (`BROWSER_MAX_STEPS`, `0` = never) so you can check in; pressing **Allow** or **Run** on the waiting step lets it carry on for another 15. **Stop** (or Esc) also stops a running `paginate`/`click_all` at the next page.
 - `paginate` extracts a table from every page by clicking the next control until the last page, and `click_all` clicks every "Show more" or expand control. Each is a single step for the model, however many clicks it takes.
 - With `VISION=1` (a model that accepts images) there is also `screenshot`, attached to the chat as an image.
 
@@ -412,6 +412,7 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `OPENAI_BASE_URL` | `https://example.com` | Usually ends in `/v1` |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model; others come from the endpoint's `/models` list |
 | `SYSTEM_PROMPT` | `You are a helpful assistant.` | Starting system prompt; editable in Settings |
+| `AI_CHECK_TIMEOUT` | `5` | Seconds the reachability check waits for the AI server. The page shows a notice when the server can't be reached or rejects the key; startup prints the state. |
 
 **Databases**
 
@@ -491,6 +492,7 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `ALLOWED_DOMAINS` | any | Comma list of hosts the model may open, e.g. `mes.local,10.0.0.5` |
 | `IGNORE_CERT_ERRORS` | `0` | `1` accepts self-signed certificates |
 | `AUTO_CLICK` | `0` | Default for **Settings → Auto-click** |
+| `BROWSER_MAX_STEPS` | `15` | Browser steps run automatically in a row before pausing; one press of **Allow**/**Run** gives another run of this many. `0` never pauses. |
 | `VISION` | `0` | `1` offers the `screenshot` action (the model must accept images) |
 | `BROWSER_SNAPSHOT_CHARS` | `8000` | Page text sent per request; longer pages are read in parts |
 | `BROWSER_RESULT_ROWS` | `30` | Rows of an extracted table shown to the model (the CSV has all) |
@@ -537,6 +539,8 @@ First look in the [error log](#error-log) for lines from the time it happened; t
 
 | Message | What to do |
 |---|---|
+| Red notice *The AI server can't be reached* | Datasquint can't connect to `OPENAI_BASE_URL`: the reason is in brackets (*Connection refused*: the server isn't running or listens on another port; *Name or service not known*: wrong host name; *no answer within 5 s*: firewall, VPN or wrong address). Start the AI server or fix `OPENAI_BASE_URL`, then press **Retry**. The notice is checked again every 15 s and disappears by itself when the server answers. |
+| Red notice *The AI server rejected the API key* | Fix `OPENAI_API_KEY` in `.env` and restart Datasquint. |
 | *Request failed … context length* | The request is larger than the model accepts. Lower `MAX_SEND_CHARS`, or start a new chat. |
 | *SSH key file not found* | The path must exist on the machine running Datasquint, readable by the account it runs as. Use **Browse…** to pick it, or **Paste private key**. |
 | *Browsing is limited to …* | The key is outside `KEY_BROWSE_ROOT`. Type its path instead, or widen `KEY_BROWSE_ROOT`. |
@@ -605,6 +609,7 @@ All responses are JSON unless noted.
 
 - `POST /api/chat` — body `{messages, model, temperature, system, dbs, browser}`. `browser: true` adds the browser instructions and the current page to the system prompt. User messages may include `attachments: [{id}]`; `dbs` is a list of connection ids whose notes, schemas and query instructions are added to the system prompt. Returns `application/x-ndjson`: `{"delta": text}` lines, plus `{"parts": n}` and `{"status": text}` when splitting, then `{"usage": {prompt, completion, estimated}}` and `{"done": true}`, or `{"error": text}`.
 - `GET /api/models` — `{models}`
+- `GET /api/ai/status[?refresh=1]` — whether the AI server answers: `{state: ok|unreachable|auth|error, message, reason, base_url, model, ms, checked_at}`; cached for 10 s unless `refresh=1`. A failed `/api/chat` reply caused by the server being unreachable or rejecting the key has `ai_down: true` or `ai_auth: true` beside `error`.
 - `GET /api/config` — default model, system prompt, base URL, upload limit, allowed extensions
 
 **Files**
