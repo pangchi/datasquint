@@ -8,6 +8,11 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.18.1 — 2026-11-03
+
+### Added
+- **Temperature guide in Settings.** Under the Temperature box: 0–0.2 steady queries, best for data; 0.3–0.5 precise, more natural wording; 0.7 (the default) balanced for most chats; 1.0 and up varied, for ideas rather than figures; above 1.2 the AI may write broken SQL. The line matching the value you type is highlighted (red above 1.2), with a reminder that totals stay exact at any setting.
+
 ## 2.18.0 — 2026-11-02
 
 ### Fixed

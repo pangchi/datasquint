@@ -245,7 +245,7 @@ Usually your administrator sets these up. To add one yourself: **Database → + 
 | Appearance | **System** follows your computer's light or dark mode; **Light** and **Dark** fix it. |
 | Colour | The colour theme: Teal, Blue, Violet, Green, Amber, Rose or Graphite. Click to preview; **Save** keeps it, **Cancel** puts the old one back. |
 | System prompt | Standing instructions for every chat, such as *"Answer briefly. Use Singapore dates."* |
-| Temperature | 0 gives focused, repeatable answers; higher values give more varied wording. 0.2–0.7 suits data questions. |
+| Temperature | How much the AI varies its answers, 0 to 2. **0–0.2**: steady queries, best for data. **0.3–0.5**: precise, more natural wording. **0.7** (the default): balanced for most chats. **1.0 and up**: varied, for ideas rather than figures. **Above 1.2**: the AI may write broken SQL. Settings shows this guide and highlights the line for the value you type. Totals stay exact at any setting, because the database does the maths. |
 | Run SQL automatically | Runs the AI's queries without pressing **Run**. It stops after 5 queries in a row so a confused AI can't loop. |
 | Auto-click | Lets the AI click, type and open pages in the browser without pressing **Allow**. It pauses after 15 browser steps in a row; one press of **Allow** lets it do another 15. Reading pages never asks. |
 | Token usage | How many tokens the AI has used since the last reset, per model: *in* is what was sent to the AI, *out* is what it wrote. Also shows this chat's total. **Reset counters** starts again from zero. The counts are for everyone using this Datasquint, not just you. |

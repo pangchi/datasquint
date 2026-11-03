@@ -437,6 +437,10 @@ dialog textarea{min-height:110px;resize:vertical}
   #sideResize{display:none}
   #messages{padding:16px 14px 30px}.composer{padding:8px 10px 12px}
 }
+.temp-help { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; color: var(--muted); }
+.temp-help li { padding: 2px 6px; border-radius: 4px; border-left: 3px solid transparent; }
+.temp-help li.on { color: var(--ink); background: color-mix(in srgb, var(--accent, #2f6f8f) 12%, transparent); border-left-color: var(--accent, #2f6f8f); }
+.temp-help li.warn.on { border-left-color: #c0392b; background: color-mix(in srgb, #c0392b 12%, transparent); }
 </style>
 </head>
 <body>
@@ -633,6 +637,14 @@ dialog textarea{min-height:110px;resize:vertical}
   <textarea id="sysPrompt"></textarea>
   <label for="temp">Temperature (0–2)</label>
   <input type="number" id="temp" min="0" max="2" step="0.1">
+  <ul id="tempHelp" class="temp-help" aria-live="polite">
+    <li data-lo="0" data-hi="0.2"><b>0–0.2</b>: steady queries, best for data</li>
+    <li data-lo="0.3" data-hi="0.5"><b>0.3–0.5</b>: precise, more natural wording</li>
+    <li data-lo="0.6" data-hi="0.9"><b>0.7</b> (the default): balanced for most chats</li>
+    <li data-lo="1.0" data-hi="1.2"><b>1.0 and up</b>: varied, for ideas rather than figures</li>
+    <li data-lo="1.3" data-hi="2"><b>Above 1.2</b>: the AI may write broken SQL</li>
+  </ul>
+  <div style="font-size:12px;color:var(--muted);margin-top:2px">Totals stay exact at any setting: the database does the maths. Temperature changes which query the AI writes and how it words the answer.</div>
   <label class="check"><input type="checkbox" id="autoRun"> Run the model's SQL queries automatically</label>
   <div style="font-size:12px;color:var(--muted);margin-top:4px">Queries are always read-only. Auto-run stops after 5 queries in a row so you can check in.</div>
   <label class="check"><input type="checkbox" id="autoClick"> Auto-click: let the model click, type and navigate in the browser without asking</label>
@@ -2467,7 +2479,16 @@ let theme = loadTheme(), themeDraft = null;
 applyTheme(theme);
 document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, mode: b.dataset.mode }; applyTheme(themeDraft); });
 document.querySelectorAll("#accentPick .swatch").forEach(b => b.onclick = () => { themeDraft = { ...themeDraft, accent: b.dataset.accent }; applyTheme(themeDraft); });
-$("#openSettings").onclick = () => { themeDraft = { ...theme }; applyTheme(themeDraft); $("#sysPrompt").value = state.settings.system; $("#temp").value = state.settings.temperature; $("#autoRun").checked = !!state.settings.autoRun; $("#autoClick").checked = !!state.settings.autoClick; $("#brStepsNote").textContent = BROWSER_STEP_LIMIT ? `Browser steps pause after ${BROWSER_STEP_LIMIT} in a row so you can check in; one press of Allow lets it do another ${BROWSER_STEP_LIMIT}.` : "Browser steps never pause (BROWSER_MAX_STEPS=0)."; $("#excelNote").checked = !state.settings.hideExcelNote; dlg.showModal(); loadUsage(); loadUpdate(); };
+function markTemp() {
+  const t = parseFloat($("#temp").value);
+  document.querySelectorAll("#tempHelp li").forEach((li, i, all) => {
+    const lo = parseFloat(li.dataset.lo), next = all[i + 1] ? parseFloat(all[i + 1].dataset.lo) : Infinity;
+    li.classList.toggle("on", !isNaN(t) && t >= lo && t < next);
+    li.classList.toggle("warn", i === all.length - 1);
+  });
+}
+$("#temp").addEventListener("input", markTemp);
+$("#openSettings").onclick = () => { themeDraft = { ...theme }; applyTheme(themeDraft); $("#sysPrompt").value = state.settings.system; $("#temp").value = state.settings.temperature; markTemp(); $("#autoRun").checked = !!state.settings.autoRun; $("#autoClick").checked = !!state.settings.autoClick; $("#brStepsNote").textContent = BROWSER_STEP_LIMIT ? `Browser steps pause after ${BROWSER_STEP_LIMIT} in a row so you can check in; one press of Allow lets it do another ${BROWSER_STEP_LIMIT}.` : "Browser steps never pause (BROWSER_MAX_STEPS=0)."; $("#excelNote").checked = !state.settings.hideExcelNote; dlg.showModal(); loadUsage(); loadUpdate(); };
 /* Updates from GitHub (UPDATES in .env: on, check or off) */
 let upd = null;
 function showUpdate(u){
