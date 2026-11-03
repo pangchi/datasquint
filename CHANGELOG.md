@@ -8,6 +8,17 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.19.0 — 2026-11-03
+
+### Added
+- **Query timeout per database connection.** *Database → Query timeout (seconds)*: how long one query on that database may run before it's stopped. Blank uses the default (`DB_TIMEOUT_MS`, 15 s). Useful when one database has slow reports over large tables and others should stay quick. Applies to the AI's queries, Download CSV, the table browser and schema reads. Saved connections get the new setting automatically (stored in `connections.sqlite`); nothing to do on update.
+- `DB_TIMEOUT_MAX_MS` (default 600000, 10 minutes): the most a connection's own timeout may be.
+- `DB_CONNECT_TIMEOUT` (default 10 s; was fixed): how long to wait when connecting, for slow VPN or SSH links.
+- `FILES_TIMEOUT_MS` (default: `DB_TIMEOUT_MS`): a separate time limit for SQL over attached files.
+
+### Changed
+- When a query is stopped for taking too long, the message says which limit applied and how to raise it, instead of PostgreSQL's *canceling statement due to statement timeout*. The AI is told each source's limit, so it keeps queries within it.
+
 ## 2.18.1 — 2026-11-03
 
 ### Added

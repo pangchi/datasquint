@@ -51,7 +51,23 @@ def _db():
         context TEXT NOT NULL DEFAULT '',
         created REAL NOT NULL,
         updated REAL NOT NULL)""")
+    _migrate(conn)
     return conn
+
+
+_migrated = False
+
+
+def _migrate(conn):
+    """Add columns that newer versions use (2.19.0: per-connection query timeout)."""
+    global _migrated
+    if _migrated:
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(connections)")}
+    if "timeout_s" not in cols:
+        conn.execute("ALTER TABLE connections ADD COLUMN timeout_s INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    _migrated = True
 
 
 def _row(r):
@@ -61,7 +77,8 @@ def _row(r):
         raise RuntimeError(f"Can't decrypt saved connection '{r['name']}': secret.key or APP_SECRET_KEY "
                            "has changed. Re-enter its password, or restore the original key.")
     return {"id": r["id"], "name": r["name"], "dsn": secret["dsn"], "ssh": secret.get("ssh"),
-            "schemas": r["schemas"], "context": r["context"], "updated": r["updated"]}
+            "schemas": r["schemas"], "context": r["context"], "updated": r["updated"],
+            "timeout_s": r["timeout_s"] or 0}
 
 
 def _seal(dsn, ssh):
@@ -77,7 +94,8 @@ def list_all():
             out.append(_row(r))
         except RuntimeError as e:  # still list it, so the user can fix or delete it
             out.append({"id": r["id"], "name": r["name"], "dsn": None, "ssh": None, "schemas": r["schemas"],
-                        "context": r["context"], "updated": r["updated"], "error": str(e)})
+                        "context": r["context"], "updated": r["updated"], "timeout_s": r["timeout_s"] or 0,
+                        "error": str(e)})
     return out
 
 
@@ -87,19 +105,21 @@ def get(cid):
     return _row(r) if r else None
 
 
-def save(name, dsn, ssh, schemas="", context="", cid=None):
+def save(name, dsn, ssh, schemas="", context="", cid=None, timeout_s=0):
     now = time.time()
     try:
         with _lock, _db() as conn:
             if cid:
-                cur = conn.execute("UPDATE connections SET name=?, secret=?, schemas=?, context=?, updated=? "
-                                   "WHERE id=?", (name, _seal(dsn, ssh), schemas, context, now, cid))
+                cur = conn.execute("UPDATE connections SET name=?, secret=?, schemas=?, context=?, timeout_s=?, "
+                                   "updated=? WHERE id=?",
+                                   (name, _seal(dsn, ssh), schemas, context, int(timeout_s or 0), now, cid))
                 if not cur.rowcount:
                     raise KeyError(cid)
             else:
                 cid = uuid.uuid4().hex[:12]
-                conn.execute("INSERT INTO connections VALUES (?,?,?,?,?,?,?)",
-                             (cid, name, _seal(dsn, ssh), schemas, context, now, now))
+                conn.execute("INSERT INTO connections (id, name, secret, schemas, context, timeout_s, created, updated) "
+                             "VALUES (?,?,?,?,?,?,?,?)",
+                             (cid, name, _seal(dsn, ssh), schemas, context, int(timeout_s or 0), now, now))
     except sqlite3.IntegrityError:
         raise ValueError(f"A connection named '{name}' already exists.")
     return cid

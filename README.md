@@ -84,6 +84,7 @@ Open **Database** in the sidebar (or **Manage connections…** in the database m
 | Name | How you and the model refer to it. The model uses it in `-- db: name`. |
 | Host, port, database, user, password, SSL | Standard PostgreSQL settings. |
 | Schemas the model can see | Comma-separated; default `public`. |
+| Query timeout (seconds) | How long one query may run on this connection. Blank = `DB_TIMEOUT_MS`; at most `DB_TIMEOUT_MAX_MS`. Also applies to schema reads and the table browser. |
 | Notes for the model | What the data means. See [Writing good notes](#writing-good-notes). |
 | Connect through SSH | Optional. See [Connecting over SSH](#connecting-over-ssh). |
 
@@ -148,7 +149,7 @@ Every query passes through four independent checks in `db.py`:
 1. Only queries starting with `SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `VALUES` or `TABLE` are accepted.
 2. Queries run as prepared statements, so PostgreSQL rejects anything containing more than one statement (`SELECT 1; DELETE ...` or `...; COMMIT; ...`) before it runs.
 3. Each query runs in a `READ ONLY` transaction, on a session with `default_transaction_read_only = on`, and is always rolled back. This also blocks data-modifying CTEs and `nextval()`.
-4. A statement timeout (`DB_TIMEOUT_MS`) and a row cap (`DB_MAX_ROWS`) stop runaway queries.
+4. A statement timeout (the connection's **Query timeout**, else `DB_TIMEOUT_MS`) and a row cap (`DB_MAX_ROWS`) stop runaway queries.
 
 These were tested against PostgreSQL 16, including attempts to slip writes through. Even so, **connect with a role that can only read.** It's the one guarantee that doesn't depend on this code, and it controls which tables the model can see:
 
@@ -430,7 +431,10 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `DB_SCHEMAS` | `public` | Default schemas the model sees; each connection can override |
 | `DB_MAX_ROWS` | `200` | Rows returned per query |
 | `DB_EXPORT_MAX_ROWS` | `100000` | Most rows **Download CSV** on a result card saves |
-| `DB_TIMEOUT_MS` | `15000` | Per-query timeout |
+| `DB_TIMEOUT_MS` | `15000` | Default per-query time limit (ms). Each saved connection can set its own **Query timeout** under **Database**; the `DATABASE_URL` connection uses this one. |
+| `DB_TIMEOUT_MAX_MS` | `600000` | Most a connection's own Query timeout may be (10 minutes), so one connection can't tie up the database for hours |
+| `DB_CONNECT_TIMEOUT` | `10` | Seconds to wait when connecting to a database (raise for slow VPN or SSH links) |
+| `FILES_TIMEOUT_MS` | same as `DB_TIMEOUT_MS` | Time limit for SQL over attached files (DuckDB); raise for heavy queries on files over 1 GB |
 | `DB_SCHEMA_CHARS` | `20000` | Max schema size sent per database |
 | `DB_RESULT_CHARS` | `20000` | Max size of each result sent to the model |
 
@@ -543,6 +547,7 @@ First look in the [error log](#error-log) for lines from the time it happened; t
 
 | Message | What to do |
 |---|---|
+| *The query took longer than 15s … and was stopped* | Ask for less (filter by date, aggregate, add a LIMIT), or raise **Query timeout** for that connection under **Database** (attached files: `FILES_TIMEOUT_MS`). If connecting itself times out on a slow VPN or SSH link, raise `DB_CONNECT_TIMEOUT`. |
 | Red notice *The AI server can't be reached* | Datasquint can't connect to `OPENAI_BASE_URL`: the reason is in brackets (*Connection refused*: the server isn't running or listens on another port; *Name or service not known*: wrong host name; *no answer within 5 s*: firewall, VPN or wrong address). Start the AI server or fix `OPENAI_BASE_URL`, then press **Retry**. The notice is checked again every 15 s and disappears by itself when the server answers. |
 | Red notice *The AI server rejected the API key* | Fix `OPENAI_API_KEY` in `.env` and restart Datasquint. |
 | *CERTIFICATE_VERIFY_FAILED … unable to get local issuer certificate*, or *The HTTPS certificate of GitHub / the AI server isn't trusted* | A company network inspecting HTTPS, or an AI server with an internal certificate. See [Company networks and HTTPS certificates](#company-networks-and-https-certificates). |

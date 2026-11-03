@@ -541,6 +541,8 @@ dialog textarea{min-height:110px;resize:vertical}
       </div>
       <label for="dbPass">Password</label><input type="password" id="dbPass" autocomplete="new-password">
       <label for="cSchemas">Schemas the model can see</label><input type="text" id="cSchemas" placeholder="public  (comma-separated)">
+      <label for="cTimeout">Query timeout (seconds)</label><input type="number" id="cTimeout" min="1" step="1" placeholder="15  (default)">
+      <div class="fieldnote" id="cTimeoutNote">Longest a query on this database may run before it's stopped. Leave blank for the default.</div>
       <label for="cContext">Notes for the model</label>
       <textarea id="cContext" placeholder="What the data means: status codes, units, time zone, how metrics are calculated…"></textarea>
       <label class="check"><input type="checkbox" id="sshOn"> Connect through SSH</label>
@@ -1436,7 +1438,7 @@ function connName(id){ return conns.find(x => x.id === id)?.name || id; }
 async function loadConnections(){
   const r = await api("/api/db/connections");
   if (r.error) { conns = []; return; }
-  conns = r.connections; dbInfo = { available: r.available, ssh_available: r.ssh_available };
+  conns = r.connections; dbInfo = { available: r.available, ssh_available: r.ssh_available, default_timeout_s: r.default_timeout_s, max_timeout_s: r.max_timeout_s };
   // migrate chats from the single-database version
   state.chats.forEach(c => { if (c.db === true && !c.dbs) c.dbs = conns.length ? [conns[0].id] : []; delete c.db; });
   if (state.dbOn && !state.dbDefaults) state.dbDefaults = conns.length ? [conns[0].id] : [];
@@ -1532,6 +1534,11 @@ function fillForm(x){
   $("#dbName").value = x?.dbname || ""; $("#dbUser").value = x?.user || ""; $("#dbSsl").value = x?.sslmode || "";
   $("#dbPass").value = ""; $("#dbPass").placeholder = x?.has_password ? SECRET_KEEP : "";
   $("#cSchemas").value = x?.schemas || ""; $("#cContext").value = x?.context || "";
+  const dflt = x?.default_timeout_s ?? dbInfo.default_timeout_s ?? 15, top = x?.max_timeout_s ?? dbInfo.max_timeout_s ?? 600;
+  $("#cTimeout").value = x?.timeout_s || ""; $("#cTimeout").placeholder = `${dflt}  (default)`; $("#cTimeout").max = top;
+  $("#cTimeoutNote").textContent = ro
+    ? `Queries on this database stop after ${x?.timeout_used_s ?? dflt} s (DB_TIMEOUT_MS in .env).`
+    : `Longest a query on this database may run before it's stopped: 1 to ${top} s. Blank uses the default, ${dflt} s (DB_TIMEOUT_MS in .env). Raise it for slow reports over large tables.`;
   const ssh = x?.ssh;
   $("#sshOn").checked = !!ssh; $("#sshHost").value = ssh?.host || ""; $("#sshPort").value = ssh?.port || "";
   $("#sshUser").value = ssh?.user || ""; $("#sshKeyPath").value = ssh?.key_path || "";
@@ -1579,7 +1586,7 @@ async function openDb(){
 function formBody(){
   return { name: $("#cName").value, host: $("#dbHost").value, port: $("#dbPort").value, dbname: $("#dbName").value,
     user: $("#dbUser").value, password: $("#dbPass").value, sslmode: $("#dbSsl").value,
-    schemas: $("#cSchemas").value, context: $("#cContext").value,
+    schemas: $("#cSchemas").value, context: $("#cContext").value, timeout_s: $("#cTimeout").value,
     ssh_enabled: $("#sshOn").checked, ssh_host: $("#sshHost").value, ssh_port: $("#sshPort").value,
     ssh_user: $("#sshUser").value, ssh_auth: $("#sshAuth").value, ssh_password: $("#sshPass").value,
     ssh_key_path: $("#sshKeyPath").value, ssh_key_text: $("#sshKeyText").value, ssh_passphrase: $("#sshPassphrase").value };
@@ -1595,7 +1602,7 @@ async function saveConn(force){
                       { method: isNew ? "POST" : "PUT", body: JSON.stringify(body) });
   btn.disabled = false;
   if (r.error && !r.id) {
-    setState("err", (force ? "Couldn't save: " : "Can't connect: ") + r.error);
+    setState("err", (force || /^(Query timeout|Give the connection|Use letters|The name|A connection named|Database name|SSH (host|user) is)/.test(r.error) ? "Couldn't save: " : "Can't connect: ") + r.error);
     $("#connForce").hidden = force || /name|required|already exists|Enter the|Paste the|Use letters/i.test(r.error);
     return;
   }

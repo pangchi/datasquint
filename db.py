@@ -34,7 +34,10 @@ except ImportError:  # optional dependency
 
 DB_MAX_ROWS = int(os.getenv("DB_MAX_ROWS", 200))
 DB_EXPORT_MAX_ROWS = int(os.getenv("DB_EXPORT_MAX_ROWS", 100000))   # "Download CSV" on result cards
-DB_TIMEOUT_MS = int(os.getenv("DB_TIMEOUT_MS", 15000))
+DB_TIMEOUT_MS = int(os.getenv("DB_TIMEOUT_MS", 15000))          # default query time limit
+DB_TIMEOUT_MAX_MS = int(os.getenv("DB_TIMEOUT_MAX_MS", 600000))  # most a connection's own time limit may be
+DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", 10))    # seconds to wait when connecting
+FILES_TIMEOUT_MS = int(os.getenv("FILES_TIMEOUT_MS", DB_TIMEOUT_MS))  # time limit for SQL over attached files
 DB_SCHEMAS = os.getenv("DB_SCHEMAS", "public")
 DB_SCHEMA_CHARS = int(os.getenv("DB_SCHEMA_CHARS", 20000))
 DB_RESULT_CHARS = int(os.getenv("DB_RESULT_CHARS", 20000))
@@ -91,7 +94,9 @@ def config(cid):
 def public(c):
     """A connection without secrets, for the browser."""
     out = {"id": c["id"], "name": c["name"], "source": c["source"], "schemas": c.get("schemas") or "",
-           "context": c.get("context") or "", "ssh": ssh_tunnel.public(c.get("ssh")), "error": c.get("error")}
+           "context": c.get("context") or "", "ssh": ssh_tunnel.public(c.get("ssh")), "error": c.get("error"),
+           "timeout_s": int(c.get("timeout_s") or 0), "timeout_used_s": timeout_ms(c) // 1000,
+           "default_timeout_s": DB_TIMEOUT_MS // 1000, "max_timeout_s": DB_TIMEOUT_MAX_MS // 1000}
     if c.get("dsn") and psycopg:
         info = conninfo_to_dict(c["dsn"])
         out.update(host=info.get("host", "localhost"), port=info.get("port", "5432"),
@@ -102,6 +107,27 @@ def public(c):
 
 def connections():
     return [public(c) for c in _all_configs()]
+
+
+def timeout_ms(c):
+    """The query time limit for a connection: its own (Database → Query timeout), else DB_TIMEOUT_MS."""
+    own = int((c or {}).get("timeout_s") or 0) * 1000
+    return max(1000, min(own, DB_TIMEOUT_MAX_MS)) if own > 0 else DB_TIMEOUT_MS
+
+
+def parse_timeout(value):
+    """Seconds from the form; blank or 0 = use the default."""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return 0
+    try:
+        secs = int(float(text))
+    except ValueError:
+        raise ValueError("Query timeout must be a number of seconds, or blank for the default.")
+    top = DB_TIMEOUT_MAX_MS // 1000
+    if secs < 0 or secs > top:
+        raise ValueError(f"Query timeout must be between 1 and {top} seconds (DB_TIMEOUT_MAX_MS), or blank for the default.")
+    return secs
 
 
 def _schemas(c):
@@ -130,9 +156,9 @@ def _open(c):
         # hostaddr routes the connection into the tunnel; host stays the real name for SSL checks
         dsn = make_conninfo(dsn, host=conninfo_to_dict(dsn).get("host") or "localhost",
                             hostaddr="127.0.0.1", port=str(local_port))
-    conn = psycopg.connect(dsn, connect_timeout=10, autocommit=True)
+    conn = psycopg.connect(dsn, connect_timeout=DB_CONNECT_TIMEOUT, autocommit=True)
     conn.execute("SET default_transaction_read_only = on")
-    conn.execute(f"SET statement_timeout = {int(DB_TIMEOUT_MS)}")
+    conn.execute(f"SET statement_timeout = {int(timeout_ms(c))}")
     conn.autocommit = False
     conn.read_only = True
     return conn
@@ -211,10 +237,11 @@ def save(fields, cid=None, force=False):
         raise KeyError("That connection no longer exists.")
     c = {"id": cid or "new", "name": name, "dsn": make_dsn(fields, old and old["dsn"]),
          "ssh": make_ssh(fields, old and old["ssh"]), "schemas": str(fields.get("schemas") or "").strip(),
-         "context": str(fields.get("context") or "").strip(), "source": "saved"}
+         "context": str(fields.get("context") or "").strip(), "source": "saved",
+         "timeout_s": parse_timeout(fields.get("timeout_s"))}
     if not force:
         _test(c)
-    cid = store.save(c["name"], c["dsn"], c["ssh"], c["schemas"], c["context"], cid=cid)
+    cid = store.save(c["name"], c["dsn"], c["ssh"], c["schemas"], c["context"], cid=cid, timeout_s=c["timeout_s"])
     _drop(cid, old)
     return status(cid)
 
@@ -453,7 +480,15 @@ def run_query(sql, cids, c=None, max_rows=None, full=False):
     conn = _open(c)
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, prepare=True)  # prepared => exactly one statement allowed
+            try:
+                cur.execute(sql, prepare=True)  # prepared => exactly one statement allowed
+            except psycopg.errors.QueryCanceled as e:
+                if "statement timeout" not in str(e):
+                    raise
+                secs = timeout_ms(c) // 1000
+                raise ValueError(f"The query took longer than {secs}s (the time limit for {c['name']}) and was stopped. "
+                                 "Try a simpler query: filter by date, aggregate, or add a LIMIT. To allow longer, "
+                                 "raise Query timeout for this connection under Database, or DB_TIMEOUT_MS in .env.") from None
             if cur.description is None:
                 columns, rows = [], []
             else:
@@ -504,13 +539,14 @@ def result_text(sql, res=None, error=None, db_name=None):
 
 def system_prompt(cids, files_section=None):
     """Instructions + each database's notes and schema, plus attached file tables if any."""
-    sections, names = [], []
+    sections, names, limits = [], [], {}
     for cid in cids:
         try:
             c = config(cid)
         except KeyError:
             continue
         names.append(c["name"])
+        limits[c["name"]] = timeout_ms(c) // 1000
         try:
             st = schema(cid)
             body = (f"Schema ({st['tables']} table(s); columns are name and type, [PK] primary key, "
@@ -521,10 +557,14 @@ def system_prompt(cids, files_section=None):
         sections.append(f"=== Database: {c['name']} (PostgreSQL) ===\n{notes}{body}")
     if files_section:
         names.append(FILES_SOURCE)
+        limits[FILES_SOURCE] = FILES_TIMEOUT_MS // 1000
         sections.append(f"=== Database: {FILES_SOURCE} (attached files, DuckDB) ===\n{files_section}")
     if not sections:
         return ""
     multi = len(sections) > 1
+    secs = set(limits.values())
+    limit_text = (f"a {secs.pop()}s time limit" if len(secs) == 1 else
+                  "a time limit per source (" + ", ".join(f"{n}: {s}s" for n, s in limits.items()) + ")")
     target = (f"\n- This chat has {len(sections)} data sources ({', '.join(names)}). Start every query with a line "
               "'-- db: <name>' naming the source it is for. A query can only use one source; to combine "
               "data from several, run one query per source and combine the results yourself.") if multi else ""
@@ -533,7 +573,7 @@ def system_prompt(cids, files_section=None):
     return f"""You can read data from {what}. To look something up, write a read-only SQL query in a ```sql code block. The app runs it and sends you the results in the next message, then you answer from those results.
 
 Rules:
-- Only read-only queries run (SELECT, WITH, EXPLAIN; on PostgreSQL also SHOW, VALUES, TABLE), one statement per block, with a {DB_TIMEOUT_MS // 1000}s timeout.
+- Only read-only queries run (SELECT, WITH, EXPLAIN; on PostgreSQL also SHOW, VALUES, TABLE), one statement per block, with {limit_text}.
 - At most {DB_MAX_ROWS} rows come back. Prefer aggregates (COUNT, SUM, GROUP BY), filters and LIMIT over fetching raw rows.
 - Use only the tables and columns in the schema below. Use schema-qualified names when unsure.
 - After writing a query, stop and wait for the results. Never make up results.

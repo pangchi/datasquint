@@ -235,6 +235,7 @@ Usually your administrator sets these up. To add one yourself: **Database → + 
   Yield = passed / total
   Times are UTC; the workshop is in Singapore (UTC+8)
   ```
+- **Query timeout (seconds)** is how long one query on this database may run before it's stopped. Leave it blank for the default (15 s unless your administrator changed `DB_TIMEOUT_MS`). Raise it, e.g. to 60 or 120, for a database where reports over large tables are slow; the most allowed is 600 s unless `DB_TIMEOUT_MAX_MS` says otherwise. When a query is stopped, the message says which limit applied, and the AI usually retries with a simpler query.
 - **Connect through SSH** is for databases behind a server. **Browse…** helps pick a key file.
 - Passwords are stored encrypted and never shown again; leave them blank when editing to keep them.
 

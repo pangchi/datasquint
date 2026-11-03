@@ -1065,7 +1065,8 @@ def _err(e, code=400):
 def db_list():
     try:
         return jsonify(connections=db.connections(), available=db.available(),
-                       ssh_available=db.ssh_tunnel.available())
+                       ssh_available=db.ssh_tunnel.available(), default_timeout_s=db.DB_TIMEOUT_MS // 1000,
+                       max_timeout_s=db.DB_TIMEOUT_MAX_MS // 1000)
     except Exception as e:
         return _err(e, 500)
 
@@ -1138,7 +1139,7 @@ def db_query():
         tables = file_tables(data.get("files") or [])
         target = db.resolve_target(sql, cids, has_files=bool(tables))
         if target == db.FILES_SOURCE:
-            res = filesql.run_query(sql, tables, db.DB_MAX_ROWS, db.DB_TIMEOUT_MS)
+            res = filesql.run_query(sql, tables, db.DB_MAX_ROWS, db.FILES_TIMEOUT_MS)
         else:
             res = db.run_query(sql, cids, target)
         qlog.info("Query on %s: %s rows in %s ms", res["db_name"], res["row_count"], res["ms"])
@@ -1158,7 +1159,7 @@ def db_export():
         tables = file_tables(data.get("files") or [])
         target = db.resolve_target(sql, cids, has_files=bool(tables))
         if target == db.FILES_SOURCE:
-            res = filesql.run_query(sql, tables, db.DB_EXPORT_MAX_ROWS, db.DB_TIMEOUT_MS, full=True)
+            res = filesql.run_query(sql, tables, db.DB_EXPORT_MAX_ROWS, db.FILES_TIMEOUT_MS, full=True)
         else:
             res = db.run_query(sql, cids, target, max_rows=db.DB_EXPORT_MAX_ROWS, full=True)
     except Exception as e:
@@ -1209,7 +1210,7 @@ def _browse_target(data):
         t = next((t for t in ftables if t["name"] == table), None)
         if not t:
             raise ValueError("That table isn't attached to this chat any more.")
-        run = lambda sql, n: filesql.run_query(sql, ftables, n, db.DB_TIMEOUT_MS)
+        run = lambda sql, n: filesql.run_query(sql, ftables, n, db.FILES_TIMEOUT_MS)
         return run, filesql._q(t["name"]), [c for c, _ in t["columns"]], t["rows"]
     if source not in (data.get("dbs") or []):
         raise ValueError("That database isn't turned on for this chat.")

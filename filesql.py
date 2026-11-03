@@ -832,7 +832,8 @@ def run_query(sql, tables, max_rows, timeout_ms, full=False):
             columns = [d[0] for d in cur.description] if cur.description else []
             rows = cur.fetchmany(max_rows + 1) if columns else []
         except duckdb.InterruptException:
-            raise ValueError(f"The query took longer than {timeout_ms // 1000}s and was stopped.")
+            raise ValueError(f"The query took longer than {timeout_ms // 1000}s and was stopped. Try a simpler query "
+                             "(filter, aggregate or LIMIT). To allow longer, set FILES_TIMEOUT_MS in .env.")
     finally:
         timer.cancel()
         con.close()
