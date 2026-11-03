@@ -34,6 +34,8 @@ import zipfile
 
 from version import __version__ as CURRENT
 
+import tlsconfig                 # which HTTPS certificates to trust (system store / CA_BUNDLE)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODE = (os.getenv("UPDATES", "on").strip().lower() or "on")
 if MODE in ("0", "false", "no", "disable", "disabled"):
@@ -70,7 +72,8 @@ def newer(a, b):
 
 def _get(url, limit=2 * 1024 * 1024):
     req = urllib.request.Request(url, headers={"User-Agent": f"Datasquint/{CURRENT}", "Cache-Control": "no-cache"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:   # honours HTTPS_PROXY / HTTP_PROXY
+    # honours HTTPS_PROXY / HTTP_PROXY; certificates as configured in tlsconfig.py (system store / CA_BUNDLE)
+    with urllib.request.urlopen(req, timeout=TIMEOUT, context=tlsconfig.context()) as r:
         data = r.read(limit + 1)
     if len(data) > limit:
         raise ValueError(f"download from {url} is larger than expected")
@@ -116,7 +119,8 @@ def check(force=False):
             except Exception:
                 notes = ""
     except Exception as e:
-        error = f"Couldn't check GitHub for updates: {e}"
+        error = (f"Couldn't check GitHub for updates. {tlsconfig.explain('GitHub')}" if tlsconfig.is_cert_error(e)
+                 else f"Couldn't check GitHub for updates: {e}")
         log.warning("%s (%s, %s)", error, REPO, BRANCH)
     with _lock:
         _state.update(checked_at=time.time(), latest=latest, error=error, notes=notes)

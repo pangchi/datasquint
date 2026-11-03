@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.17.0** · [Changelog](CHANGELOG.md)
+**Version 2.18.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -32,6 +32,7 @@ Ask questions about your PostgreSQL databases and your CSV and Excel files in pl
 - [Troubleshooting](#troubleshooting)
 - [Project layout](#project-layout)
 - [API](#api)
+- [Company networks and HTTPS certificates](#company-networks-and-https-certificates)
 - [Running in production](#running-in-production)
 - [Versions and updating](#versions-and-updating)
 - [Upgrading from pgPeek, DB Helper or flask-chat](#upgrading-from-pgpeek-db-helper-or-flask-chat)
@@ -413,6 +414,7 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model; others come from the endpoint's `/models` list |
 | `SYSTEM_PROMPT` | `You are a helpful assistant.` | Starting system prompt; editable in Settings |
 | `AI_CHECK_TIMEOUT` | `5` | Seconds the reachability check waits for the AI server. The page shows a notice when the server can't be reached or rejects the key; startup prints the state. |
+| `CA_BUNDLE` | none | File (or folder) with your company's root certificate(s), Base-64 `.cer`/`.pem`, trusted for HTTPS in addition to the usual ones: for update checks and an HTTPS AI server. Usually not needed: with `truststore` installed, Datasquint already trusts what Windows/macOS trust. See [Company networks and HTTPS certificates](#company-networks-and-https-certificates). |
 
 **Databases**
 
@@ -504,7 +506,7 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 
 ### Dependencies
 
-`flask`, `openai` and `python-dotenv` are required. The rest each enable one feature, and the app explains what to install if one is missing: `psycopg[binary]` (PostgreSQL), `duckdb` (SQL over CSV/Excel files), `python-calamine` (fast Excel loading), `cryptography` (saved connections), `paramiko` (SSH), `pypdf` (PDF), `python-docx` (Word), `openpyxl` (Excel), `Pillow` (BMP), `selenium` (Browser).
+`flask`, `openai` and `python-dotenv` are required. `truststore` lets Datasquint trust the system's HTTPS certificates (company networks). The rest each enable one feature, and the app explains what to install if one is missing: `psycopg[binary]` (PostgreSQL), `duckdb` (SQL over CSV/Excel files), `python-calamine` (fast Excel loading), `cryptography` (saved connections), `paramiko` (SSH), `pypdf` (PDF), `python-docx` (Word), `openpyxl` (Excel), `Pillow` (BMP), `selenium` (Browser).
 
 ## Error log
 
@@ -541,6 +543,7 @@ First look in the [error log](#error-log) for lines from the time it happened; t
 |---|---|
 | Red notice *The AI server can't be reached* | Datasquint can't connect to `OPENAI_BASE_URL`: the reason is in brackets (*Connection refused*: the server isn't running or listens on another port; *Name or service not known*: wrong host name; *no answer within 5 s*: firewall, VPN or wrong address). Start the AI server or fix `OPENAI_BASE_URL`, then press **Retry**. The notice is checked again every 15 s and disappears by itself when the server answers. |
 | Red notice *The AI server rejected the API key* | Fix `OPENAI_API_KEY` in `.env` and restart Datasquint. |
+| *CERTIFICATE_VERIFY_FAILED … unable to get local issuer certificate*, or *The HTTPS certificate of GitHub / the AI server isn't trusted* | A company network inspecting HTTPS, or an AI server with an internal certificate. See [Company networks and HTTPS certificates](#company-networks-and-https-certificates). |
 | *Request failed … context length* | The request is larger than the model accepts. Lower `MAX_SEND_CHARS`, or start a new chat. |
 | *SSH key file not found* | The path must exist on the machine running Datasquint, readable by the account it runs as. Use **Browse…** to pick it, or **Paste private key**. |
 | *Browsing is limited to …* | The key is outside `KEY_BROWSE_ROOT`. Type its path instead, or widen `KEY_BROWSE_ROOT`. |
@@ -591,6 +594,7 @@ version.py           The version number (single place to change it)
 logsetup.py          Error log: rotating file, secret masking, request details
 usage.py             Token counters per model (usage.json), with reset
 updater.py           Checks GitHub for a newer version and installs it (Settings → Updates)
+tlsconfig.py         Which HTTPS certificates are trusted (system store via truststore, or CA_BUNDLE), and what to do when one isn't
 recalc.py            Calculates Excel formulas saved without results (Excel, LibreOffice or pycel)
 requirements.txt
 env.example          Settings template: copy it to .env and fill it in
@@ -650,6 +654,15 @@ All responses are JSON unless noted.
 - `POST /api/script` — `{title, queries: [{sql, title?}], dbs, files}`; returns a `text/x-python` attachment with header `X-Queries` (queries included), or `{error}` with 400 when none can be resolved.
 - `POST /api/db/export` — same body as `/api/db/query`; returns the full result as `text/csv` (UTF-8 with BOM), up to `DB_EXPORT_MAX_ROWS`, with headers `X-Row-Count`, `X-Truncated` (`1` if cut off) and `X-Max-Rows`; `{error}` with 400 on failure
 - `POST /api/db/query` — `{sql, dbs, files}` (`files`: the chat's attachment ids in message order; CSV/Excel ones become the `files` source) → `{db_id, db_name, columns, rows, row_count, truncated, ms, text}` or `{error, text}`; `text` is what the model receives
+
+## Company networks and HTTPS certificates
+
+Datasquint makes HTTPS requests to GitHub (update checks) and, if `OPENAI_BASE_URL` starts with `https://`, to the AI server. Many company networks inspect HTTPS with their own certificate, which Windows and the browser trust (IT installs it) but Python, with its own list, doesn't. That gives *CERTIFICATE_VERIFY_FAILED … unable to get local issuer certificate*.
+
+- **Usually nothing to do:** `requirements.txt` installs `truststore` (Python 3.10+), and Datasquint then trusts exactly what Windows or macOS trust, company certificates included. The start-up banner shows which applies: *HTTPS certificates trusted: the system's certificate store (truststore)*.
+- **If the computer itself doesn't trust it** (an internal AI server, a Linux server without the company certificate, Python 3.9): ask IT for the root certificate as a Base-64 `.cer` or `.pem` file and set `CA_BUNDLE=C:\path\company-root.cer` in `.env`. It's trusted in addition to the usual certificates.
+- Certificate checks are never switched off. When one fails, Settings → Updates, the start-up banner and the red notice say what to do instead of showing Python's error.
+- If `pip install -r requirements.txt` itself fails with the same certificate error, update pip first (`python -m pip install --upgrade pip`; pip 24.2 and later use the system's certificates), or download the `truststore` wheel in the browser and `pip install` the file. Setting `CA_BUNDLE` also works without `truststore`.
 
 ## Running in production
 

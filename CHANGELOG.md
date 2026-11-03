@@ -8,6 +8,16 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.18.0 — 2026-11-02
+
+### Fixed
+- **Update checks failed on company networks** with *CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate*. Python used its own list of certificate authorities, which doesn't include the company certificate a network uses to inspect HTTPS, although Windows and the browser trust it. Datasquint now trusts the system's certificate store (Windows, macOS) through the `truststore` package, now in `requirements.txt`. An HTTPS AI server gets the same certificates (the openai library otherwise uses its own list).
+
+### Added
+- `CA_BUNDLE`: a file or folder with extra root certificates (your company's), for when the computer itself doesn't trust them. With it, Python 3.13's extra-strict certificate formalities are relaxed as in earlier Python versions (chain, host name and dates are still checked), because older company certificates often miss a field it requires.
+- When a certificate isn't trusted, Settings → Updates, the start-up banner and the red notice explain what to do instead of showing Python's error; the AI notice has its own wording for this. Certificate checks are never switched off.
+- The start-up banner shows which certificates are trusted.
+
 ## 2.17.0 — 2026-11-02
 
 ### Added

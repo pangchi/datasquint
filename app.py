@@ -80,12 +80,26 @@ ZIP_MAX_FILES = int(os.getenv("ZIP_MAX_FILES", 300))
 ZIP_MAX_TOTAL_MB = int(os.getenv("ZIP_MAX_TOTAL_MB", 100))
 ZIP_MAX_IMAGES = int(os.getenv("ZIP_MAX_IMAGES", 10))
 
-client = openai.OpenAI(api_key=API_KEY, base_url=BASE_URL)
+import tlsconfig                 # which HTTPS certificates to trust (system store / CA_BUNDLE)
+
+
+def _http_client(**kw):
+    """httpx client for the AI server using the same certificates as the rest of Datasquint (the openai library
+    otherwise uses its own list, which doesn't include company certificates)."""
+    maker = getattr(openai, "DefaultHttpxClient", None)
+    if maker is None:
+        import httpx
+        maker = httpx.Client
+    return maker(verify=tlsconfig.context(), **kw)
+
+
+client = openai.OpenAI(api_key=API_KEY, base_url=BASE_URL, http_client=_http_client())
 app = Flask(__name__)
 
 # ---------------------------------------------------------------- is the AI server reachable?
 AI_CHECK_TIMEOUT = float(os.getenv("AI_CHECK_TIMEOUT", 5))
-_probe_client = openai.OpenAI(api_key=API_KEY, base_url=BASE_URL, timeout=AI_CHECK_TIMEOUT, max_retries=0)
+_probe_client = openai.OpenAI(api_key=API_KEY, base_url=BASE_URL, timeout=AI_CHECK_TIMEOUT, max_retries=0,
+                              http_client=_http_client())
 _ai_lock = threading.Lock()
 _ai_state = {"checked": 0.0, "result": None}
 
@@ -109,6 +123,8 @@ def ai_problem(e):
     if isinstance(e, openai.APITimeoutError):
         return f"The AI server at {BASE_URL} didn't answer in time.", True
     if isinstance(e, openai.APIConnectionError):
+        if tlsconfig.is_cert_error(e) or "CERTIFICATE_VERIFY_FAILED" in _root_cause(e):
+            return tlsconfig.explain(f"the AI server at {BASE_URL}"), True
         return f"Can't reach the AI server at {BASE_URL} ({_root_cause(e)}).", True
     if isinstance(e, openai.AuthenticationError):
         return f"The AI server at {BASE_URL} rejected the API key (OPENAI_API_KEY in .env).", False
@@ -132,7 +148,8 @@ def ai_status(force=False):
             msg, down = ai_problem(e)
             res["reason"] = (f"no answer within {AI_CHECK_TIMEOUT:g} s" if isinstance(e, openai.APITimeoutError)
                              else _root_cause(e))
-            res.update(state="unreachable" if down else "error",
+            cert = tlsconfig.is_cert_error(e) or "CERTIFICATE_VERIFY_FAILED" in res["reason"]
+            res.update(state="cert" if cert else "unreachable" if down else "error",
                        message=msg or f"Couldn't check the AI server at {BASE_URL}: {_root_cause(e)}")
         res["ms"] = int((time.time() - t0) * 1000)
         res["checked_at"] = time.strftime("%H:%M:%S")
@@ -1605,6 +1622,7 @@ if __name__ == "__main__":
     print(f" * Open http://{shown}:{port} in your browser")
     print(f" * Error log: {LOG_PATH or 'console only (the log file could not be opened)'}")
     print(f" * Browser (web pages in Edge/Chrome): {webtools.status_line()}")
+    print(f" * HTTPS certificates trusted: {tlsconfig.describe()}")
 
     def _startup_ai_check():   # in the background: a server that's down mustn't hold up the start
         r = ai_status(force=True)

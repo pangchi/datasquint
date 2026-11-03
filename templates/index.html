@@ -1247,8 +1247,10 @@ function showAI(r){
   $("#aiBanner").hidden = !down;
   if (down) {
     $("#aiTitle").textContent = r.state === "auth" ? "The AI server rejected the API key."
+      : r.state === "cert" ? "The AI server's certificate isn't trusted."
       : r.state === "unreachable" ? "The AI server can't be reached:" : "The AI server didn't answer properly:";
     $("#aiMsg").textContent = r.state === "auth" ? `Check OPENAI_API_KEY in .env (server ${r.base_url}). `
+      : r.state === "cert" ? `${r.message.replace(/^The HTTPS certificate of .*? isn't trusted\. /, "")} `
       : r.state === "unreachable" ? `${r.base_url} (${r.reason}). Check that it's running and that OPENAI_BASE_URL in .env is right; questions will fail until it's back. `
       : `${r.message} `;
     $("#aiWhen").textContent = r.checked_at ? `Checked ${r.checked_at}` : "";
