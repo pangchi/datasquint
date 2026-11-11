@@ -8,6 +8,23 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.21.0 — 2026-11-11
+
+### Fixed
+- **With several databases ticked, only one was queried.** Pressing **Run** on a query ran just that one, so the AI got one database's result and answered from it. Now, when a reply has several queries (e.g. one per database), the button reads **Run all N** and runs them together, so every result reaches the AI at once. Auto-run already did this.
+- The AI is now told that questions are about every selected source unless the user names one, to query each source with relevant tables in the same reply, and to say which source each figure comes from.
+
+### Added
+- **`-- db: all`** and **`-- db: name1, name2`** run the same query on several databases (when they share tables, e.g. one per site) and return one result with a `database` column first. Works for Download CSV; the Python script gets one query per database. If one database lacks a table, the error names it.
+
+## 2.20.0 — 2026-11-03
+
+### Added
+- **Rows returned per database connection.** *Database → Rows returned*: the most rows one query on that database sends to the AI. Blank uses the default (`DB_MAX_ROWS`, 200). The text budget for each result grows in proportion, so the extra rows really reach the AI. The result card still keeps the first 100, and Download CSV still saves the whole result. Saved connections are upgraded automatically.
+- `DB_MAX_ROWS_MAX` (default 5000): the most a connection's own Rows returned may be.
+- `FILES_MAX_ROWS` (default: `DB_MAX_ROWS`): rows returned by SQL over attached files.
+- The AI is told each source's row limit.
+
 ## 2.19.0 — 2026-11-03
 
 ### Added

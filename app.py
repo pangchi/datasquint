@@ -1066,7 +1066,8 @@ def db_list():
     try:
         return jsonify(connections=db.connections(), available=db.available(),
                        ssh_available=db.ssh_tunnel.available(), default_timeout_s=db.DB_TIMEOUT_MS // 1000,
-                       max_timeout_s=db.DB_TIMEOUT_MAX_MS // 1000)
+                       max_timeout_s=db.DB_TIMEOUT_MAX_MS // 1000, default_max_rows=db.DB_MAX_ROWS,
+                       max_rows_max=db.DB_MAX_ROWS_MAX)
     except Exception as e:
         return _err(e, 500)
 
@@ -1131,17 +1132,37 @@ def db_schema(cid):
         return _err(e)
 
 
+def _run_sql(sql, cids, tables, export=False):
+    """Run a query on the source its '-- db:' line names; '-- db: all' / 'a, b' runs it on each and combines."""
+    targets = db.resolve_targets(sql, cids, has_files=bool(tables))
+    out = []
+    for target in targets:
+        try:
+            if target == db.FILES_SOURCE:
+                n = db.DB_EXPORT_MAX_ROWS if export else db.FILES_MAX_ROWS
+                res = filesql.run_query(sql, tables, n, db.FILES_TIMEOUT_MS, full=export)
+                res["row_limit"] = n
+            elif export:
+                res = db.run_query(sql, cids, target, max_rows=db.DB_EXPORT_MAX_ROWS, full=True)
+            else:
+                res = db.run_query(sql, cids, target)
+        except Exception as e:
+            if len(targets) == 1:
+                raise
+            name = target if target == db.FILES_SOURCE else target["name"]
+            raise ValueError(f"On {name}: {str(e).strip()}\nThe same query runs on each database listed in '-- db:', so "
+                             f"they all need the tables it uses. Leave {name} out of the list, or give it its own query.") from None
+        out.append(res)
+    return out[0] if len(out) == 1 else db.combine(out)
+
+
 @app.post("/api/db/query")
 def db_query():
     data = request.get_json(force=True) or {}
     sql, cids = data.get("sql", ""), data.get("dbs") or []
     try:
         tables = file_tables(data.get("files") or [])
-        target = db.resolve_target(sql, cids, has_files=bool(tables))
-        if target == db.FILES_SOURCE:
-            res = filesql.run_query(sql, tables, db.DB_MAX_ROWS, db.FILES_TIMEOUT_MS)
-        else:
-            res = db.run_query(sql, cids, target)
+        res = _run_sql(sql, cids, tables)
         qlog.info("Query on %s: %s rows in %s ms", res["db_name"], res["row_count"], res["ms"])
         return jsonify(sql=sql, text=db.result_text(sql, res, db_name=res["db_name"]), **res)
     except Exception as e:
@@ -1157,11 +1178,7 @@ def db_export():
     sql, cids = data.get("sql", ""), data.get("dbs") or []
     try:
         tables = file_tables(data.get("files") or [])
-        target = db.resolve_target(sql, cids, has_files=bool(tables))
-        if target == db.FILES_SOURCE:
-            res = filesql.run_query(sql, tables, db.DB_EXPORT_MAX_ROWS, db.FILES_TIMEOUT_MS, full=True)
-        else:
-            res = db.run_query(sql, cids, target, max_rows=db.DB_EXPORT_MAX_ROWS, full=True)
+        res = _run_sql(sql, cids, tables, export=True)
     except Exception as e:
         qlog.warning("CSV download failed: %s | SQL: %s", str(e).strip(), _sql_for_log(sql))
         return jsonify(error=str(e).strip()), 400
@@ -1267,19 +1284,21 @@ def make_script():
             continue
         seen.add(sql)
         try:
-            target = db.resolve_target(sql, cids, has_files=bool(ftables))
+            targets = db.resolve_targets(sql, cids, has_files=bool(ftables))
         except ValueError:
             continue
         first = next((ln.strip() for ln in sql.splitlines() if ln.strip() and not ln.strip().startswith("--")), sql)
         title = str(item.get("title") or "").strip() or first[:70]
-        if target == db.FILES_SOURCE:
-            queries.append({"title": title, "sql": sql, "source": db.FILES_SOURCE})
-        else:
+        for target in targets:   # '-- db: all' / 'a, b': one query per database in the script
+            if target == db.FILES_SOURCE:
+                queries.append({"title": title, "sql": sql, "source": db.FILES_SOURCE})
+                continue
             pub = db.public(target)
             used_dbs[target["name"]] = {"host": pub.get("host"), "port": pub.get("port"), "dbname": pub.get("dbname"),
                                         "user": pub.get("user"), "sslmode": pub.get("sslmode") or "",
                                         "ssh": {k: pub["ssh"].get(k) for k in ("host", "port", "user")} if pub.get("ssh") else None}
-            queries.append({"title": title, "sql": sql, "source": target["name"]})
+            queries.append({"title": f"{title} ({target['name']})" if len(targets) > 1 else title,
+                            "sql": sql, "source": target["name"]})
     if not queries:
         qlog.warning("Python script requested, but none of %d queries could be resolved", len(data.get("queries") or []))
         return jsonify(error="There are no queries to put in a script: run a query first."), 400

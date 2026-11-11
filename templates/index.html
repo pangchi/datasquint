@@ -541,8 +541,12 @@ dialog textarea{min-height:110px;resize:vertical}
       </div>
       <label for="dbPass">Password</label><input type="password" id="dbPass" autocomplete="new-password">
       <label for="cSchemas">Schemas the model can see</label><input type="text" id="cSchemas" placeholder="public  (comma-separated)">
-      <label for="cTimeout">Query timeout (seconds)</label><input type="number" id="cTimeout" min="1" step="1" placeholder="15  (default)">
+      <div class="grid2" style="grid-template-columns:1fr 1fr">
+        <div><label for="cTimeout">Query timeout (seconds)</label><input type="number" id="cTimeout" min="1" step="1" placeholder="15  (default)"></div>
+        <div><label for="cRows">Rows returned</label><input type="number" id="cRows" min="1" step="1" placeholder="200  (default)"></div>
+      </div>
       <div class="fieldnote" id="cTimeoutNote">Longest a query on this database may run before it's stopped. Leave blank for the default.</div>
+      <div class="fieldnote" id="cRowsNote">Most rows one query returns. Leave blank for the default.</div>
       <label for="cContext">Notes for the model</label>
       <textarea id="cContext" placeholder="What the data means: status codes, units, time zone, how metrics are calculated…"></textarea>
       <label class="check"><input type="checkbox" id="sshOn"> Connect through SSH</label>
@@ -985,10 +989,18 @@ function addRunButtons(bubble){
     codeBar(pre).prepend(b);
   });
   if (!canQuery()) return;
-  sqlBlocks(bubble).forEach(code => {
+  // A reply with several queries (e.g. one per database) runs them together, so the model gets every result at once.
+  const blocks = sqlBlocks(bubble);
+  blocks.forEach(code => {
     const pre = code.closest("pre"); if (pre.querySelector(".runsql")) return;
-    const b = document.createElement("button"); b.className = "runsql"; b.type = "button"; b.textContent = "Run";
-    b.onclick = () => { if (isBusy()) return; b.disabled = true; b.textContent = "Running…"; runAndSend([code.innerText.trim()], cur(), true); };
+    const b = document.createElement("button"); b.className = "runsql"; b.type = "button";
+    b.textContent = blocks.length > 1 ? `Run all ${blocks.length}` : "Run";
+    if (blocks.length > 1) b.title = "Runs all the queries in this reply and sends every result to the model";
+    b.onclick = () => {
+      if (isBusy()) return;
+      bubble.querySelectorAll(".runsql").forEach(x => { if (blocks.some(k => k.closest("pre") === x.closest("pre"))) { x.disabled = true; x.textContent = "Running…"; } });
+      runAndSend(blocks.map(k => k.innerText.trim()), cur(), true);
+    };
     codeBar(pre).prepend(b);
   });
 }
@@ -1438,7 +1450,7 @@ function connName(id){ return conns.find(x => x.id === id)?.name || id; }
 async function loadConnections(){
   const r = await api("/api/db/connections");
   if (r.error) { conns = []; return; }
-  conns = r.connections; dbInfo = { available: r.available, ssh_available: r.ssh_available, default_timeout_s: r.default_timeout_s, max_timeout_s: r.max_timeout_s };
+  conns = r.connections; dbInfo = { available: r.available, ssh_available: r.ssh_available, default_timeout_s: r.default_timeout_s, max_timeout_s: r.max_timeout_s, default_max_rows: r.default_max_rows, max_rows_max: r.max_rows_max };
   // migrate chats from the single-database version
   state.chats.forEach(c => { if (c.db === true && !c.dbs) c.dbs = conns.length ? [conns[0].id] : []; delete c.db; });
   if (state.dbOn && !state.dbDefaults) state.dbDefaults = conns.length ? [conns[0].id] : [];
@@ -1536,9 +1548,14 @@ function fillForm(x){
   $("#cSchemas").value = x?.schemas || ""; $("#cContext").value = x?.context || "";
   const dflt = x?.default_timeout_s ?? dbInfo.default_timeout_s ?? 15, top = x?.max_timeout_s ?? dbInfo.max_timeout_s ?? 600;
   $("#cTimeout").value = x?.timeout_s || ""; $("#cTimeout").placeholder = `${dflt}  (default)`; $("#cTimeout").max = top;
+  const rd = x?.default_max_rows ?? dbInfo.default_max_rows ?? 200, rtop = x?.max_rows_max ?? dbInfo.max_rows_max ?? 5000;
+  $("#cRows").value = x?.max_rows || ""; $("#cRows").placeholder = `${rd}  (default)`; $("#cRows").max = rtop;
+  $("#cRowsNote").textContent = ro
+    ? `Queries on this database return up to ${x?.rows_used ?? rd} rows (DB_MAX_ROWS in .env).`
+    : `Rows returned: most rows one query sends to the AI, 1 to ${rtop}. Blank uses the default, ${rd} (DB_MAX_ROWS). More rows use more of the AI's context (tokens). The result card shows the first 100; Download CSV saves the whole result.`;
   $("#cTimeoutNote").textContent = ro
     ? `Queries on this database stop after ${x?.timeout_used_s ?? dflt} s (DB_TIMEOUT_MS in .env).`
-    : `Longest a query on this database may run before it's stopped: 1 to ${top} s. Blank uses the default, ${dflt} s (DB_TIMEOUT_MS in .env). Raise it for slow reports over large tables.`;
+    : `Query timeout: longest a query on this database may run before it's stopped, 1 to ${top} s. Blank uses the default, ${dflt} s (DB_TIMEOUT_MS in .env). Raise it for slow reports over large tables.`;
   const ssh = x?.ssh;
   $("#sshOn").checked = !!ssh; $("#sshHost").value = ssh?.host || ""; $("#sshPort").value = ssh?.port || "";
   $("#sshUser").value = ssh?.user || ""; $("#sshKeyPath").value = ssh?.key_path || "";
@@ -1586,7 +1603,7 @@ async function openDb(){
 function formBody(){
   return { name: $("#cName").value, host: $("#dbHost").value, port: $("#dbPort").value, dbname: $("#dbName").value,
     user: $("#dbUser").value, password: $("#dbPass").value, sslmode: $("#dbSsl").value,
-    schemas: $("#cSchemas").value, context: $("#cContext").value, timeout_s: $("#cTimeout").value,
+    schemas: $("#cSchemas").value, context: $("#cContext").value, timeout_s: $("#cTimeout").value, max_rows: $("#cRows").value,
     ssh_enabled: $("#sshOn").checked, ssh_host: $("#sshHost").value, ssh_port: $("#sshPort").value,
     ssh_user: $("#sshUser").value, ssh_auth: $("#sshAuth").value, ssh_password: $("#sshPass").value,
     ssh_key_path: $("#sshKeyPath").value, ssh_key_text: $("#sshKeyText").value, ssh_passphrase: $("#sshPassphrase").value };
@@ -1602,7 +1619,7 @@ async function saveConn(force){
                       { method: isNew ? "POST" : "PUT", body: JSON.stringify(body) });
   btn.disabled = false;
   if (r.error && !r.id) {
-    setState("err", (force || /^(Query timeout|Give the connection|Use letters|The name|A connection named|Database name|SSH (host|user) is)/.test(r.error) ? "Couldn't save: " : "Can't connect: ") + r.error);
+    setState("err", (force || /^(Query timeout|Rows returned|Give the connection|Use letters|The name|A connection named|Database name|SSH (host|user) is)/.test(r.error) ? "Couldn't save: " : "Can't connect: ") + r.error);
     $("#connForce").hidden = force || /name|required|already exists|Enter the|Paste the|Use letters/i.test(r.error);
     return;
   }

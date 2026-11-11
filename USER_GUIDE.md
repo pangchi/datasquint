@@ -88,6 +88,8 @@ Queries can only **read** data. Datasquint blocks anything that would change or 
 
 **Choosing data sources**: click the database chip and tick the databases this chat may use. New chats start with your last choice. To check what the AI can see, ask *"What tables do you have access to?"*
 
+**Several databases at once**: with more than one database ticked, the AI checks every one that has relevant tables, unless you name one (*"…in plant_a only"*). It writes one query per database in the same reply; when auto-run is off, the button on those queries says **Run all 2** (or 3…) and runs them together, so the AI answers from every database at once. When the databases have the same tables (e.g. one per site), it can also write `-- db: all` to run one query on each and get all the rows in one result, with a **database** column saying where each row came from.
+
 At most 200 rows come back to the AI from one query, so ask for summaries (totals, averages, top 10, counts by month) rather than *"show me every order"*. If you need every row, use **Download CSV** on the result card.
 
 ## Attaching files
@@ -235,6 +237,7 @@ Usually your administrator sets these up. To add one yourself: **Database → + 
   Yield = passed / total
   Times are UTC; the workshop is in Singapore (UTC+8)
   ```
+- **Rows returned** is the most rows one query on this database sends to the AI. Blank uses the default (200 unless your administrator changed `DB_MAX_ROWS`); up to 5000 is allowed. Raise it when you want the AI to read longer lists, but asking for totals and summaries is usually better: more rows use more of the AI's context and make answers slower. The result card shows the first 100 rows, and **Download CSV** always saves the whole result.
 - **Query timeout (seconds)** is how long one query on this database may run before it's stopped. Leave it blank for the default (15 s unless your administrator changed `DB_TIMEOUT_MS`). Raise it, e.g. to 60 or 120, for a database where reports over large tables are slow; the most allowed is 600 s unless `DB_TIMEOUT_MAX_MS` says otherwise. When a query is stopped, the message says which limit applied, and the AI usually retries with a simpler query.
 - **Connect through SSH** is for databases behind a server. **Browse…** helps pick a key file.
 - Passwords are stored encrypted and never shown again; leave them blank when editing to keep them.

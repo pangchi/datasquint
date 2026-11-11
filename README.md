@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.19.0** · [Changelog](CHANGELOG.md)
+**Version 2.21.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -84,6 +84,7 @@ Open **Database** in the sidebar (or **Manage connections…** in the database m
 | Name | How you and the model refer to it. The model uses it in `-- db: name`. |
 | Host, port, database, user, password, SSL | Standard PostgreSQL settings. |
 | Schemas the model can see | Comma-separated; default `public`. |
+| Rows returned | Most rows one query on this connection sends to the AI. Blank = `DB_MAX_ROWS` (200); at most `DB_MAX_ROWS_MAX` (5000). The text budget for the result (`DB_RESULT_CHARS`) grows in proportion, so the extra rows really reach the AI. The result card keeps the first 100; **Download CSV** saves the whole result. |
 | Query timeout (seconds) | How long one query may run on this connection. Blank = `DB_TIMEOUT_MS`; at most `DB_TIMEOUT_MAX_MS`. Also applies to schema reads and the table browser. |
 | Notes for the model | What the data means. See [Writing good notes](#writing-good-notes). |
 | Connect through SSH | Optional. See [Connecting over SSH](#connecting-over-ssh). |
@@ -123,7 +124,7 @@ The model answers data questions by writing SQL in a ` ```sql ` block:
 - **Download CSV** re-runs the card's query on the server, with the same read-only checks and timeout, and downloads the **whole** result up to `DB_EXPORT_MAX_ROWS` (default 100,000 rows), with long values kept in full. The file starts with a UTF-8 byte-order mark so Excel opens accents correctly. If the limit cuts the result off, a message says how many rows you got. Because it runs the query again, the file reflects the data at download time. **Copy CSV** copies only the rows shown on the card.
 - **Code in replies**: every code block has **Download** next to **Copy**. The file gets the extension of the block's language (`.py`, `.csv`, `.sql`, `.js`, `.json`, `.sh`, `.ps1`, `.html` and many more; `.txt` if none). If the reply names the file, on the block's first line (`# file: report.py`, `// save as app.js`, `-- totals.sql`) or in `code` text just above it (*Save this as `summary.csv`:*), that name is used; otherwise it's named after the chat, numbered when a reply has several unnamed blocks of the same type. Hover over **Download** to see the name.
 
-**Several databases in one chat**: the model starts each query with `-- db: <name>`, and the result card shows which database it ran on. A query can only use one database, so to combine data the model runs one query per database and combines the results itself. If it leaves out the line, or names a database that isn't ticked, it's told which names to use and tries again.
+**Several databases in one chat**: the model starts each query with `-- db: <name>`, and the result card shows which database it ran on. Unless you name one, the model is told the question is about all of them and to query each one with relevant tables in the same reply. A reply's queries run together: automatically, or with one press of **Run all N** when auto-run is off. When the databases share tables (one per site, say), `-- db: all` or `-- db: plant_a, plant_b` runs the same query on each and returns one result with a `database` column first (Download CSV and the Python script work the same way; a database missing a table is named in the error). A query can't join tables across databases; the model combines the results itself. If it leaves out the line, or names a database that isn't ticked, it's told which names to use and tries again.
 
 To check the model can see a database, ask *"What tables do you have access to?"*
 
@@ -149,7 +150,7 @@ Every query passes through four independent checks in `db.py`:
 1. Only queries starting with `SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `VALUES` or `TABLE` are accepted.
 2. Queries run as prepared statements, so PostgreSQL rejects anything containing more than one statement (`SELECT 1; DELETE ...` or `...; COMMIT; ...`) before it runs.
 3. Each query runs in a `READ ONLY` transaction, on a session with `default_transaction_read_only = on`, and is always rolled back. This also blocks data-modifying CTEs and `nextval()`.
-4. A statement timeout (the connection's **Query timeout**, else `DB_TIMEOUT_MS`) and a row cap (`DB_MAX_ROWS`) stop runaway queries.
+4. A statement timeout (the connection's **Query timeout**, else `DB_TIMEOUT_MS`) and a row cap (the connection's **Rows returned**, else `DB_MAX_ROWS`) stop runaway queries.
 
 These were tested against PostgreSQL 16, including attempts to slip writes through. Even so, **connect with a role that can only read.** It's the one guarantee that doesn't depend on this code, and it controls which tables the model can see:
 
@@ -429,14 +430,16 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `DATABASE_URL` | none | Optional connection defined in `.env` |
 | `DATABASE_LABEL` / `DATABASE_CONTEXT` | none | Name and notes for the `DATABASE_URL` connection |
 | `DB_SCHEMAS` | `public` | Default schemas the model sees; each connection can override |
-| `DB_MAX_ROWS` | `200` | Rows returned per query |
+| `DB_MAX_ROWS` | `200` | Default rows a query returns to the AI. Each saved connection can set its own **Rows returned** under **Database**; the `DATABASE_URL` connection uses this one. |
+| `DB_MAX_ROWS_MAX` | `5000` | Most a connection's own Rows returned may be |
+| `FILES_MAX_ROWS` | same as `DB_MAX_ROWS` | Rows returned by SQL over attached files |
 | `DB_EXPORT_MAX_ROWS` | `100000` | Most rows **Download CSV** on a result card saves |
 | `DB_TIMEOUT_MS` | `15000` | Default per-query time limit (ms). Each saved connection can set its own **Query timeout** under **Database**; the `DATABASE_URL` connection uses this one. |
 | `DB_TIMEOUT_MAX_MS` | `600000` | Most a connection's own Query timeout may be (10 minutes), so one connection can't tie up the database for hours |
 | `DB_CONNECT_TIMEOUT` | `10` | Seconds to wait when connecting to a database (raise for slow VPN or SSH links) |
 | `FILES_TIMEOUT_MS` | same as `DB_TIMEOUT_MS` | Time limit for SQL over attached files (DuckDB); raise for heavy queries on files over 1 GB |
 | `DB_SCHEMA_CHARS` | `20000` | Max schema size sent per database |
-| `DB_RESULT_CHARS` | `20000` | Max size of each result sent to the model |
+| `DB_RESULT_CHARS` | `20000` | Max size of each result sent to the model at the default row limit; scaled up for connections that return more rows |
 
 **SSH** (for the `DATABASE_URL` connection; saved connections set SSH in the app)
 

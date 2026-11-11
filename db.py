@@ -32,7 +32,9 @@ try:
 except ImportError:  # optional dependency
     psycopg = None
 
-DB_MAX_ROWS = int(os.getenv("DB_MAX_ROWS", 200))
+DB_MAX_ROWS = int(os.getenv("DB_MAX_ROWS", 200))               # default rows a query returns (to the AI and the card)
+DB_MAX_ROWS_MAX = int(os.getenv("DB_MAX_ROWS_MAX", 5000))       # most a connection's own Rows returned may be
+FILES_MAX_ROWS = int(os.getenv("FILES_MAX_ROWS", DB_MAX_ROWS))  # rows returned by SQL over attached files
 DB_EXPORT_MAX_ROWS = int(os.getenv("DB_EXPORT_MAX_ROWS", 100000))   # "Download CSV" on result cards
 DB_TIMEOUT_MS = int(os.getenv("DB_TIMEOUT_MS", 15000))          # default query time limit
 DB_TIMEOUT_MAX_MS = int(os.getenv("DB_TIMEOUT_MAX_MS", 600000))  # most a connection's own time limit may be
@@ -96,7 +98,9 @@ def public(c):
     out = {"id": c["id"], "name": c["name"], "source": c["source"], "schemas": c.get("schemas") or "",
            "context": c.get("context") or "", "ssh": ssh_tunnel.public(c.get("ssh")), "error": c.get("error"),
            "timeout_s": int(c.get("timeout_s") or 0), "timeout_used_s": timeout_ms(c) // 1000,
-           "default_timeout_s": DB_TIMEOUT_MS // 1000, "max_timeout_s": DB_TIMEOUT_MAX_MS // 1000}
+           "default_timeout_s": DB_TIMEOUT_MS // 1000, "max_timeout_s": DB_TIMEOUT_MAX_MS // 1000,
+           "max_rows": int(c.get("max_rows") or 0), "rows_used": row_limit(c),
+           "default_max_rows": DB_MAX_ROWS, "max_rows_max": DB_MAX_ROWS_MAX}
     if c.get("dsn") and psycopg:
         info = conninfo_to_dict(c["dsn"])
         out.update(host=info.get("host", "localhost"), port=info.get("port", "5432"),
@@ -113,6 +117,31 @@ def timeout_ms(c):
     """The query time limit for a connection: its own (Database → Query timeout), else DB_TIMEOUT_MS."""
     own = int((c or {}).get("timeout_s") or 0) * 1000
     return max(1000, min(own, DB_TIMEOUT_MAX_MS)) if own > 0 else DB_TIMEOUT_MS
+
+
+def row_limit(c):
+    """Rows a query returns on a connection: its own (Database → Rows returned), else DB_MAX_ROWS."""
+    own = int((c or {}).get("max_rows") or 0)
+    return max(1, min(own, DB_MAX_ROWS_MAX)) if own > 0 else DB_MAX_ROWS
+
+
+def result_chars(rows):
+    """Text budget for a result sent to the AI: DB_RESULT_CHARS, scaled up when more rows than the default are allowed."""
+    return int(DB_RESULT_CHARS * max(1.0, rows / max(1, DB_MAX_ROWS)))
+
+
+def parse_rows(value):
+    """Rows from the form; blank or 0 = use the default."""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return 0
+    try:
+        n = int(float(text))
+    except ValueError:
+        raise ValueError("Rows returned must be a whole number, or blank for the default.")
+    if n < 0 or n > DB_MAX_ROWS_MAX:
+        raise ValueError(f"Rows returned must be between 1 and {DB_MAX_ROWS_MAX} (DB_MAX_ROWS_MAX), or blank for the default.")
+    return n
 
 
 def parse_timeout(value):
@@ -238,10 +267,11 @@ def save(fields, cid=None, force=False):
     c = {"id": cid or "new", "name": name, "dsn": make_dsn(fields, old and old["dsn"]),
          "ssh": make_ssh(fields, old and old["ssh"]), "schemas": str(fields.get("schemas") or "").strip(),
          "context": str(fields.get("context") or "").strip(), "source": "saved",
-         "timeout_s": parse_timeout(fields.get("timeout_s"))}
+         "timeout_s": parse_timeout(fields.get("timeout_s")), "max_rows": parse_rows(fields.get("max_rows"))}
     if not force:
         _test(c)
-    cid = store.save(c["name"], c["dsn"], c["ssh"], c["schemas"], c["context"], cid=cid, timeout_s=c["timeout_s"])
+    cid = store.save(c["name"], c["dsn"], c["ssh"], c["schemas"], c["context"], cid=cid, timeout_s=c["timeout_s"],
+                     max_rows=c["max_rows"])
     _drop(cid, old)
     return status(cid)
 
@@ -471,10 +501,54 @@ def resolve_target(sql, cids, has_files=False):
                      f"using one of: {', '.join(names)}.")
 
 
+def resolve_targets(sql, cids, has_files=False):
+    """Like resolve_target, but '-- db: all' or '-- db: a, b' picks several databases: the same query runs on each.
+
+    'all' means every database in the chat (not the attached files, which use a different SQL dialect).
+    """
+    m = DB_TAG_RE.search(sql)
+    want = m.group(1).strip().strip("`'\"") if m else ""
+    if want.lower() not in ("all", "*") and "," not in want:
+        return [resolve_target(sql, cids, has_files)]
+    configs = []
+    for cid in [c for c in cids if c]:
+        try:
+            configs.append(config(cid))
+        except KeyError:
+            pass
+    if want.lower() in ("all", "*"):
+        if not configs:
+            raise ValueError("'-- db: all' runs a query on every database in this chat, but none is turned on.")
+        return configs
+    out = []
+    for name in [n.strip().strip("`'\"") for n in want.split(",") if n.strip()]:
+        out.append(resolve_target(f"-- db: {name}\n", cids, has_files))
+    if FILES_SOURCE in out and len(out) > 1:
+        raise ValueError(f"'{FILES_SOURCE}' (attached files) uses a different SQL dialect, so it can't share a query with "
+                         "a database. Write a separate query for it.")
+    return out
+
+
+def combine(results):
+    """One result from the same query run on several databases, with a 'database' column first."""
+    cols = results[0]["columns"]
+    for r in results[1:]:
+        if r["columns"] != cols:
+            raise ValueError(f"The query returns different columns on {results[0]['db_name']} ({', '.join(cols)}) and "
+                             f"{r['db_name']} ({', '.join(r['columns'])}). Write one query per database instead.")
+    tag = "database" if "database" not in cols else "source_database"
+    return {"columns": [tag] + list(cols),
+            "rows": [[r["db_name"]] + list(row) for r in results for row in r["rows"]],
+            "row_count": sum(r["row_count"] for r in results), "truncated": any(r["truncated"] for r in results),
+            "row_limit": sum(r.get("row_limit") or DB_MAX_ROWS for r in results),
+            "ms": sum(r["ms"] for r in results), "db_name": ", ".join(r["db_name"] for r in results),
+            "per_db": [{"db_name": r["db_name"], "row_count": r["row_count"], "truncated": r["truncated"]} for r in results]}
+
+
 def run_query(sql, cids, c=None, max_rows=None, full=False):
     """Run one read-only query on the right connection. Returns columns, rows (capped) and timing."""
-    max_rows = max_rows or DB_MAX_ROWS
     c = c or resolve_target(sql, cids)
+    max_rows = max_rows or row_limit(c)
     sql = check_sql(sql)
     t0 = time.time()
     conn = _open(c)
@@ -500,7 +574,8 @@ def run_query(sql, cids, c=None, max_rows=None, full=False):
     truncated = len(rows) > max_rows
     rows = [[_cell(v, full) for v in r] for r in rows[:max_rows]]
     return {"db_id": c["id"], "db_name": c["name"], "columns": columns, "rows": rows, "row_count": len(rows),
-            "truncated": truncated, "ms": int((time.time() - t0) * 1000)}
+            "truncated": truncated, "row_limit": max_rows,
+            "ms": int((time.time() - t0) * 1000)}
 
 
 def _md(v):
@@ -509,7 +584,7 @@ def _md(v):
 
 
 def result_text(sql, res=None, error=None, db_name=None):
-    """Format a result (or error) as text for the model, capped at DB_RESULT_CHARS."""
+    """Format a result (or error) as text for the model, capped at DB_RESULT_CHARS (scaled for larger row limits)."""
     head = (f"Database: {db_name}\n" if db_name else "") + f"```sql\n{sql.strip()}\n```\n"
     if error:
         return head + f"Error: {error}"
@@ -520,7 +595,7 @@ def result_text(sql, res=None, error=None, db_name=None):
     used, shown = sum(len(x) for x in lines), 0
     for r in res["rows"]:
         line = "| " + " | ".join(_md(v) for v in r) + " |"
-        if used + len(line) > DB_RESULT_CHARS:
+        if used + len(line) > result_chars(res.get("row_limit") or DB_MAX_ROWS):
             break
         lines.append(line)
         used += len(line) + 1
@@ -539,7 +614,7 @@ def result_text(sql, res=None, error=None, db_name=None):
 
 def system_prompt(cids, files_section=None):
     """Instructions + each database's notes and schema, plus attached file tables if any."""
-    sections, names, limits = [], [], {}
+    sections, names, limits, rowcaps = [], [], {}, {}
     for cid in cids:
         try:
             c = config(cid)
@@ -547,6 +622,7 @@ def system_prompt(cids, files_section=None):
             continue
         names.append(c["name"])
         limits[c["name"]] = timeout_ms(c) // 1000
+        rowcaps[c["name"]] = row_limit(c)
         try:
             st = schema(cid)
             body = (f"Schema ({st['tables']} table(s); columns are name and type, [PK] primary key, "
@@ -558,23 +634,34 @@ def system_prompt(cids, files_section=None):
     if files_section:
         names.append(FILES_SOURCE)
         limits[FILES_SOURCE] = FILES_TIMEOUT_MS // 1000
+        rowcaps[FILES_SOURCE] = FILES_MAX_ROWS
         sections.append(f"=== Database: {FILES_SOURCE} (attached files, DuckDB) ===\n{files_section}")
     if not sections:
         return ""
     multi = len(sections) > 1
     secs = set(limits.values())
+    caps = set(rowcaps.values())
+    rows_text = (f"At most {caps.pop()} rows come back." if len(caps) == 1 else
+                 "At most this many rows come back per source: " + ", ".join(f"{n} {r}" for n, r in rowcaps.items()) + ".")
     limit_text = (f"a {secs.pop()}s time limit" if len(secs) == 1 else
                   "a time limit per source (" + ", ".join(f"{n}: {s}s" for n, s in limits.items()) + ")")
+    dbs = [n for n in names if n != FILES_SOURCE]
+    same = (f" When the databases have the same tables, '-- db: all' runs one query on every database ({', '.join(dbs)}) "
+            "and returns all their rows together, with a 'database' column saying where each row came from; "
+            "'-- db: name1, name2' does the same for some of them.") if len(dbs) > 1 else ""
     target = (f"\n- This chat has {len(sections)} data sources ({', '.join(names)}). Start every query with a line "
-              "'-- db: <name>' naming the source it is for. A query can only use one source; to combine "
-              "data from several, run one query per source and combine the results yourself.") if multi else ""
+              "'-- db: <name>' naming the source it is for. Unless the user names one source, questions are about "
+              "all of them: query every source that has relevant tables before you answer, and say which source "
+              "each figure comes from. Several ```sql blocks in one reply run together, so write one block per "
+              f"source in the same reply.{same} A single query can't join tables from different sources; combine "
+              "their results yourself.") if multi else ""
     what = ("these data sources" if multi else
             "tables loaded from files attached to this chat" if files_section else "a PostgreSQL database")
     return f"""You can read data from {what}. To look something up, write a read-only SQL query in a ```sql code block. The app runs it and sends you the results in the next message, then you answer from those results.
 
 Rules:
 - Only read-only queries run (SELECT, WITH, EXPLAIN; on PostgreSQL also SHOW, VALUES, TABLE), one statement per block, with {limit_text}.
-- At most {DB_MAX_ROWS} rows come back. Prefer aggregates (COUNT, SUM, GROUP BY), filters and LIMIT over fetching raw rows.
+- {rows_text} Prefer aggregates (COUNT, SUM, GROUP BY), filters and LIMIT over fetching raw rows.
 - Use only the tables and columns in the schema below. Use schema-qualified names when unsure.
 - After writing a query, stop and wait for the results. Never make up results.
 - If a query fails, read the error, fix the query and try again.
