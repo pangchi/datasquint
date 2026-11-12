@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.21.0** · [Changelog](CHANGELOG.md)
+**Version 2.22.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -379,6 +379,8 @@ Trade-offs: an N-part send costs N + 1 or more requests; the answer works from n
 ## Saving, exporting and importing chats
 
 ### Where chats are kept
+
+**Search chats** (top of the sidebar, or **Ctrl+K** / ⌘K): lists only the chats that contain every word typed, in any order and ignoring case, with the matching line under each title. It looks at titles, your messages, the model's replies, and the SQL and database names of query results; result rows and web-page text are left out, since they'd match almost anything. Clicking a chat (or **Enter** for the first) opens it scrolled to the first match, with all matches highlighted; **Esc** clears the search. Searching happens in the browser, so nothing is sent to the server.
 
 Every chat is saved automatically in your browser's local storage as you go. Close Datasquint, come back the next day, pick the chat in the sidebar and keep typing: the model gets the whole earlier conversation, and the chat keeps its ticked databases and attachments.
 

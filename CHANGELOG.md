@@ -8,6 +8,11 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.22.0 — 2026-11-12
+
+### Added
+- **Search chats** at the top of the sidebar (**Ctrl+K** / ⌘K jumps to it). Lists the chats that contain every word typed, with the matching line under each title and the words highlighted. Searches titles, your messages, the AI's replies, and the SQL and database names of query results. Clicking a chat (or **Enter** for the first) opens it at the first match, with all matches highlighted; **Esc** clears the search. Runs in the browser; nothing is sent to the server.
+
 ## 2.21.0 — 2026-11-11
 
 ### Fixed

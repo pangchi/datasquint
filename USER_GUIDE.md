@@ -215,6 +215,8 @@ Deleting a file that chats still use removes it from those chats too. Deleting c
 
 Chats are saved automatically in your browser. Close Datasquint, come back tomorrow, click the chat and carry on.
 
+**Finding an old chat**: type in **Search chats** at the top of the sidebar (or press **Ctrl+K**, ⌘K on a Mac). Only chats containing all the words you type are listed, with the matching line underneath. It searches chat titles, your messages, the AI's answers, and the SQL and database names of query results (not the rows inside results). Click a chat, or press **Enter** for the first one: it opens at the first match, with every match highlighted. Press **Esc** in the search box to clear it.
+
 They're tied to **this browser on this computer, at this exact address**. Opening Datasquint at a different address (for example `localhost` instead of `127.0.0.1`), in a private window, or after clearing browsing data shows an empty list. Export regularly to keep a copy.
 
 **Export** (download icon, top right, for the current chat):

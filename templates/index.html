@@ -82,6 +82,18 @@ body.resizing{cursor:col-resize;user-select:none}
 body.resizing aside{transition:none}
 .newchat{display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--side-hi);border-radius:8px;background:none;cursor:pointer;color:#fff}
 .newchat:hover{background:var(--side-hi)}
+.chatsearch{display:flex;align-items:center;gap:6px;margin-top:8px;padding:0 8px;border:1px solid var(--side-hi);border-radius:8px;color:var(--side-ink)}
+.chatsearch:focus-within{border-color:color-mix(in srgb,var(--accent) 60%,#fff)}
+.chatsearch input{flex:1;min-width:0;background:none;border:0;outline:0;color:#fff;padding:8px 0;font:inherit;font-size:13px}
+.chatsearch input::placeholder{color:var(--side-ink);opacity:.7}
+.chatsearch kbd{font:11px/1 inherit;opacity:.55;border:1px solid var(--side-hi);border-radius:4px;padding:2px 4px;white-space:nowrap}
+.chatsearch:focus-within kbd,.chatsearch.has kbd{display:none}
+.item.hit{flex-wrap:wrap;row-gap:2px}
+.item .snip{flex-basis:100%;order:9;font-size:12px;color:var(--side-ink);opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:2px}
+.item .snip b,.item.hit span b{color:#fff;font-weight:600;background:color-mix(in srgb,var(--accent) 45%,transparent);border-radius:2px}
+.searchnote{padding:10px;font-size:13px;color:var(--side-ink);opacity:.8}
+mark.qhit{background:color-mix(in srgb,#f5c542 55%,transparent);color:inherit;border-radius:2px;padding:0 1px}
+mark.qhit.now{outline:2px solid #e0a800}
 #chatList{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:2px;margin-top:4px}
 .item{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:14px}
 .item:hover,.item.active{background:var(--side-hi);color:#fff}
@@ -449,6 +461,11 @@ dialog textarea{min-height:110px;resize:vertical}
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
     New chat
   </button>
+  <div class="chatsearch">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <input type="search" id="chatSearch" placeholder="Search chats" aria-label="Search chats" autocomplete="off" spellcheck="false">
+    <kbd title="Ctrl+K (⌘K on a Mac)">Ctrl K</kbd>
+  </div>
   <div id="chatList"></div>
   <div class="sidefoot">
     <button id="openDb"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg> Database</button>
@@ -897,14 +914,83 @@ function attachmentsEl(atts, onRemove){
   return w;
 }
 
+/* ---------- chat search ---------- */
+// Searches chat titles, what you and the AI wrote, and the SQL and database names of query results
+// (not the result rows themselves, which would match almost anything). All words must appear, in any order.
+let searchQ = "", jumped = "";   // jumped: chat|query already scrolled to its first match
+const searchTerms = q => [...new Set(q.toLowerCase().split(/\s+/).filter(Boolean))];
+function chatTexts(c){
+  const out = [{ where: "title", text: c.title || "" }];
+  c.messages.forEach((m, i) => {
+    if (m.kind === "sql") (m.results || []).forEach(r => out.push({ where: "sql", i, text: `${r.db_name || ""} ${r.sql || ""}` }));
+    else if (m.kind === "web") (m.results || []).forEach(r => out.push({ where: "web", i, text: `${r.title || ""} ${r.url || ""}` }));
+    else out.push({ where: m.role, i, text: typeof m.content === "string" ? m.content : "" });
+  });
+  return out;
+}
+function searchChat(c, terms){
+  const parts = chatTexts(c), all = parts.map(p => p.text.toLowerCase()).join("\n");
+  if (!terms.every(t => all.includes(t))) return null;
+  let hits = 0; terms.forEach(t => { let k = all.indexOf(t); while (k >= 0) { hits++; k = all.indexOf(t, k + t.length); } });
+  const best = parts.find(p => p.where !== "title" && terms.some(t => p.text.toLowerCase().includes(t)));
+  return { hits, snippet: best ? snippetOf(best.text, terms) : "", inTitle: terms.some(t => (c.title || "").toLowerCase().includes(t)) };
+}
+function snippetOf(text, terms){
+  const flat = text.replace(/```[a-z]*|\*\*|[#`>|]/gi, " ").replace(/\s+/g, " ").trim(), low = flat.toLowerCase();
+  const at = Math.min(Infinity, ...terms.map(t => low.indexOf(t)).filter(k => k >= 0));
+  if (at === Infinity) return flat.slice(0, 140);
+  const from = Math.max(0, at - 24), cut = flat.slice(from, from + 140);
+  return (from ? "…" : "") + cut;
+}
+function markTerms(text, terms){   // HTML-escaped text with the search words in <b>
+  if (!terms.length) return esc(text);
+  const re = new RegExp("(" + terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  return text.split(re).map((s, k) => k % 2 ? `<b>${esc(s)}</b>` : esc(s)).join("");
+}
+// Highlight the search words in the open chat and scroll to the first one.
+function highlightChat(scroll){
+  const terms = searchTerms(searchQ), box = $("#messages");
+  if (!terms.length || !box) return 0;
+  const re = new RegExp(terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT, { acceptNode: n =>
+    n.parentElement.closest("button, .status, .qhit, script, style") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+  let first = null, count = 0;
+  nodes.forEach(n => {
+    const text = n.nodeValue; re.lastIndex = 0; if (!re.test(text)) return;
+    const frag = document.createDocumentFragment(); let last = 0; re.lastIndex = 0; let m;
+    while ((m = re.exec(text))) {
+      frag.append(text.slice(last, m.index));
+      const mk = document.createElement("mark"); mk.className = "qhit"; mk.textContent = m[0]; frag.append(mk);
+      first = first || mk; count++; last = m.index + m[0].length;
+    }
+    frag.append(text.slice(last)); n.replaceWith(frag);
+  });
+  if (first && scroll) {
+    first.closest("details")?.setAttribute("open", "");
+    first.classList.add("now"); first.scrollIntoView({ block: "center" });
+  }
+  return count;
+}
+
 /* ---------- rendering ---------- */
 function renderList(){
   const list = $("#chatList"); list.innerHTML = "";
+  const terms = searchTerms(searchQ);
+  $(".chatsearch").classList.toggle("has", !!terms.length);
+  let shown = 0;
   state.chats.forEach(c => {
+    const found = terms.length ? searchChat(c, terms) : null;
+    if (terms.length && !found) return;
+    shown++;
     const d = document.createElement("div");
-    d.className = "item" + (c.id === state.current ? " active" : "") + (jobs.has(c.id) ? " busy" : unseen.has(c.id) ? " unseen" : "");
+    d.className = "item" + (c.id === state.current ? " active" : "") + (jobs.has(c.id) ? " busy" : unseen.has(c.id) ? " unseen" : "") + (found ? " hit" : "");
     d.innerHTML = `<i class="mark"></i><span></span><button title="Rename">✎</button><button title="Delete">✕</button>`;
     d.querySelector("span").textContent = c.title || "New chat";
+    if (found) {
+      d.querySelector("span").innerHTML = markTerms(c.title || "New chat", terms);
+      if (found.snippet) { const sn = document.createElement("div"); sn.className = "snip"; sn.innerHTML = markTerms(found.snippet, terms); d.appendChild(sn); }
+    }
     d.title = jobs.has(c.id) ? "Reply in progress" : unseen.has(c.id) ? "New reply" : "";
     d.onclick = () => switchTo(c.id);
     const [ren, del] = d.querySelectorAll("button");
@@ -912,7 +998,27 @@ function renderList(){
     del.onclick = e => { e.stopPropagation(); deleteChats([c]); };
     list.appendChild(d);
   });
+  if (terms.length && !shown) list.innerHTML = `<div class="searchnote">No chats contain “${esc(searchQ.trim())}”.</div>`;
 }
+(() => {
+  const box = $("#chatSearch"); let t;
+  box.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { searchQ = box.value; render(); }, 120); });
+  box.addEventListener("keydown", e => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); box.value = ""; searchQ = ""; render(); $("#input").focus(); }
+    if (e.key === "Enter") {   // open the first chat that matches
+      e.preventDefault();
+      const first = state.chats.find(c => searchChat(c, searchTerms(searchQ = box.value)));
+      if (first) switchTo(first.id);
+    }
+  });
+  document.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k" && !document.querySelector("dialog[open]")) {
+      e.preventDefault();
+      if ($("#sidebar").classList.contains("hidden")) $("#toggleSide").click();
+      box.focus(); box.select();
+    }
+  });
+})();
 
 function sqlCard(r){
   const card = document.createElement("div"); card.className = "sqlcard";
@@ -1085,6 +1191,10 @@ function render(){
   box.style.height = "";
   c.messages.forEach((m, i) => box.appendChild(msgEl(m, i)));
   const job = jobOf(c);
+  if (searchQ.trim() && !job?.reply) {   // searching: highlight the words; jump to the first one once per chat and query
+    const key = c.id + "|" + searchQ.trim().toLowerCase(), jump = jumped !== key;
+    if (highlightChat(jump) && jump) { jumped = key; return; }
+  }
   if (job?.reply) {   // a reply still being written: show it with the cursor and its status line
     const bubbles = box.querySelectorAll(".msg.assistant .bubble"), bubble = bubbles[bubbles.length - 1];
     if (bubble) {
