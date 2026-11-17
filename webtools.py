@@ -226,7 +226,8 @@ def execute(a, visual=False):
     """Run one action, and tell the model if the window or tab it was using had been closed meanwhile.
     In Visual mode, a marked screenshot of the result comes with every action that may change what's shown."""
     try:
-        out = _execute(a)
+        with browser.ai_step():
+            out = _execute(a)
     except BrowserError as e:
         notes = browser.take_notices()
         raise BrowserError(" ".join(notes + [str(e)])) if notes else e
@@ -400,7 +401,46 @@ Visual mode is on: you can see the page. After each step you get a screenshot in
 - Images cost many tokens: only the last few screenshots are kept in the conversation."""
 
 
-def system_section(visual=False):
+MANUAL_SHOWN = _int("MANUAL_STEPS_SHOWN", "15")         # the user's own browser steps put in the prompt
+MANUAL_MINUTES = _int("MANUAL_STEPS_MINUTES", "60")
+
+
+def step_text(s):
+    """One step the user took by hand, as a line for the model (and the Browser menu)."""
+    el = f"[{s.get('id')}:{s.get('kind')} {s.get('label') or ''}]".replace(" ]", "]")
+    v = s.get("value")
+    if s["ev"] == "click":
+        what = f"clicked {el}"
+    elif s["ev"] == "type":
+        what = f"typed {v!r} into {el}" if v is not None else f"typed a password into {el}"
+    elif s["ev"] == "enter":
+        what = (f"typed {v!r} into {el} and pressed Enter" if v else f"pressed Enter in {el}") if v is not None \
+            else f"typed a password into {el} and pressed Enter"
+    elif s["ev"] == "select":
+        what = f"chose {v!r} in {el}"
+    else:
+        return f"opened {s.get('title') or '(no title)'} — {s.get('url')}"
+    return what
+
+
+def manual_section():
+    steps = browser.manual_steps(MANUAL_SHOWN, MANUAL_MINUTES) if browser is not None else []
+    if not steps:
+        return ""
+    lines, page = [], None
+    for s in steps:
+        if s["ev"] != "page" and s.get("url") != page:
+            lines.append(f"  on {s.get('title') or '(no title)'} — {s.get('url')}:")
+        page = s.get("url")
+        lines.append(f"- {time.strftime('%H:%M:%S', time.localtime(s['t']))} {step_text(s)}")
+    return ("\n\n=== What the user did in the browser by hand (oldest first, last "
+            f"{MANUAL_MINUTES} min) ===\n" + "\n".join(lines) +
+            "\nThese are the user's own clicks and typing, not yours. When they say \"this\", \"what I just "
+            "did\" or \"do the same for…\", this is what they mean. Ids are as they were on that page; on the same "
+            "page you can repeat a step with the same id, otherwise find the element again.")
+
+
+def system_section(visual=False, manual=True):
     """Browser instructions plus the page open now, for the system prompt ("" when turned off)."""
     if not ENABLED:
         return ""
@@ -417,7 +457,7 @@ def system_section(visual=False):
         t0 = time.time()
         text, _ = page_text()
         log.debug("Page read for the prompt in %.1f s", time.time() - t0)
-        return head + "\n\n=== Current page ===\n" + text
+        return head + (manual_section() if manual else "") + "\n\n=== Current page ===\n" + text
     except Exception as e:
         log.warning("Couldn't read the page for the prompt: %s", e)
         return head + f"\n\n=== Current page ===\n(Couldn't read the page: {str(e).strip().splitlines()[0][:200]})"

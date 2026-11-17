@@ -1430,6 +1430,24 @@ def browser_start():
         return _berr(e)
 
 
+@app.get("/api/browser/manual")
+def browser_manual():
+    """The user's own steps in the browser window, newest last: {steps: [{t, ev, text, url, title}], tracking}."""
+    if not webtools.available():
+        return jsonify(steps=[], tracking=False)
+    steps = webtools.browser.manual_steps(int(request.args.get("limit", 50) or 50))
+    return jsonify(tracking=webtools.browser.TRACK, steps=[
+        {"t": s["t"], "ev": s["ev"], "text": webtools.step_text(s), "url": s.get("url"), "title": s.get("title")}
+        for s in steps])
+
+
+@app.post("/api/browser/manual/clear")
+def browser_manual_clear():
+    if webtools.available():
+        webtools.browser.clear_manual()
+    return jsonify(ok=True, steps=[])
+
+
 @app.post("/api/browser/close")
 def browser_close():
     try:
@@ -1572,7 +1590,7 @@ def chat():
                       "Tell the user if they ask for data.)").strip()
     if data.get("browser") and webtools.ENABLED:
         # read now, so the model sees the page as it is at this moment (after the last click)
-        system = (system + "\n\n" + webtools.system_section(visual=bool(data.get("visual")))).strip()
+        system = (system + "\n\n" + webtools.system_section(visual=bool(data.get("visual")), manual=data.get("manual", True) is not False)).strip()
 
     keep = screenshot_messages(raw)
     messages = [{"role": m.get("role", "user"), "content": build_content(m, ftables, i not in keep)}

@@ -8,6 +8,8 @@ macros that save model round-trips: paginate (extract a table, click Next, repea
 All calls take a lock, so the Flask threads and the agent loop never drive the browser at once.
 """
 import base64
+import collections
+import contextlib
 import hashlib
 import io
 import os
@@ -160,6 +162,59 @@ function readTable(t, withIds, maxRows) {
 """
 _JS_HELPERS = _JS_HELPERS.replace("%POINTER%", "true" if os.getenv("POINTER_CLICKABLES", "1").strip() != "0" else "false")
 
+
+# Records what the user does in the window by hand: clicks, typing, choices, Enter. Runs in every page (also
+# installed for new documents through CDP), keeps the steps in sessionStorage so a click that leads to another page
+# of the same site isn't lost, and Python collects them every couple of seconds. Passwords are never recorded.
+_JS_RECORDER = "(() => {\n" + "%HELPERS%" + r"""
+if (window.__psqRec) return; window.__psqRec = 1;
+const KEY = '__psq_log';
+function push(e) {
+  e.t = Date.now(); e.url = location.href; e.title = document.title;
+  try {
+    const a = JSON.parse(sessionStorage.getItem(KEY) || '[]'); a.push(e);
+    sessionStorage.setItem(KEY, JSON.stringify(a.slice(-100)));
+  } catch (_) { (window.__psqMem = window.__psqMem || []).push(e); }
+}
+function target(el) {      // the clickable thing that was hit: the element itself or a clickable parent
+  for (let n = el, i = 0; n && n.nodeType === 1 && i < 8; n = n.parentElement, i++) if (isInter(n)) return n;
+  return el && el.nodeType === 1 ? el : null;
+}
+function info(el) {
+  return {id: +psqId(el), kind: isInter(el) ? kind(el) : el.tagName.toLowerCase(),
+          label: (label(el) || cut(el.innerText || '', 60)).replace(/ = ".*$/, '')};
+}
+document.addEventListener('click', e => {
+  if (!e.isTrusted) return;
+  const el = target(e.target); if (!el) return;
+  if (el.matches('input,textarea,select') && !/^(checkbox|radio|button|submit|reset|image)$/.test(el.type || '')) return;
+  push(Object.assign({ev: 'click'}, info(el)));
+}, true);
+document.addEventListener('change', e => {
+  const el = e.target; if (!el || !el.matches || !el.matches('input,select,textarea')) return;
+  if (!e.isTrusted && el.tagName !== 'SELECT') return;     // some dropdowns report the choice as an untrusted event
+  if (/^(checkbox|radio)$/.test(el.type || '')) return;            // the click already says it
+  const secret = (el.type || '').toLowerCase() === 'password';
+  const value = el.tagName === 'SELECT' ? clean((el.options[el.selectedIndex] || {}).text || '') : cut(el.value, 120);
+  push(Object.assign({ev: el.tagName === 'SELECT' ? 'select' : 'type', value: secret ? null : value}, info(el)));
+}, true);
+document.addEventListener('keydown', e => {
+  if (!e.isTrusted || e.key !== 'Enter') return;
+  const el = e.target; if (!el || !el.matches || !el.matches('input')) return;
+  const secret = (el.type || '').toLowerCase() === 'password';
+  push(Object.assign({ev: 'enter', value: secret ? null : cut(el.value, 120)}, info(el)));
+}, true);
+})();
+"""
+
+_JS_RECORDER = _JS_RECORDER.replace("%HELPERS%", _JS_HELPERS)
+
+_JS_COLLECT = r"""
+let a = [];
+try { a = JSON.parse(sessionStorage.getItem('__psq_log') || '[]'); sessionStorage.removeItem('__psq_log'); } catch (_) {}
+a = a.concat(window.__psqMem || []); window.__psqMem = [];
+return a;
+"""
 
 # Numbered boxes over every clickable element in view, for a marked screenshot. The numbers are the same ids
 # the page text uses, so the model can click what it sees. arguments[0] false removes them.
@@ -380,6 +435,14 @@ class Browser:
         self.kind = default_kind()    # "edge" or "chrome": the one running, or the next to start
         self.hidden = set()           # handles that aren't real tabs (the New Tab page footer)
         self.notices = []             # things the model should hear with its next action's result
+        # steps the user took in the window by hand (see _JS_RECORDER), and when Datasquint itself was acting
+        self.manual = collections.deque(maxlen=300)
+        self.ai_windows = collections.deque(maxlen=200)
+        self._seq = 0
+        self._last_url = None
+        self._last_poll = 0.0
+        self._registered = set()      # tabs with the recorder set up for new pages
+        self._poller = None
 
     # ----------------------------------------------------------------- lifecycle
     def status(self):
@@ -439,6 +502,7 @@ class Browser:
             return
         d.switch_to.window(tabs[-1])
         self.frame_path = []
+        self._watch()
         self.notices.append(f"The tab in use had been closed, so this continues in another open tab: "
                             f"{d.title!r} ({d.current_url}).")
 
@@ -502,6 +566,8 @@ class Browser:
             self.driver.set_page_load_timeout(float(os.getenv("PAGE_LOAD_TIMEOUT", "60")))
             self.frame_path = []
             self.mode = "attached" if attach else "launched"
+            self._registered = set()
+            self._watch()
             return self.status()
 
     START_PAGES = ("chrome://newtab", "chrome://new-tab-page", "chrome://newtab-footer", "edge://newtab",
@@ -567,6 +633,128 @@ class Browser:
         self._ensure_tab()
         return self.driver
 
+    # ----------------------------------------------------------------- the user's own steps
+    TRACK = os.getenv("TRACK_CLICKS", "1").strip() != "0"
+
+    @contextlib.contextmanager
+    def ai_step(self):
+        """Around anything Datasquint does in the page, so those clicks aren't reported as the user's."""
+        start = time.time()
+        try:
+            yield
+        finally:
+            self.ai_windows.append((start, time.time()))
+            if self.lock.acquire(timeout=5):
+                try:
+                    if self.driver:
+                        self._last_url = self.driver.current_url
+                except WebDriverException:
+                    pass
+                finally:
+                    self.lock.release()
+
+    def _watch(self):
+        """Set up the recorder in the current tab (now and for every page it opens later) and the collector thread."""
+        if not self.TRACK or not self.driver:
+            return
+        d = self.driver
+        try:
+            h = d.current_window_handle
+            if h not in self._registered:
+                try:
+                    d.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": _JS_RECORDER})
+                except Exception:
+                    pass          # no CDP (unusual): the collector installs it on each page it visits instead
+                self._registered.add(h)
+            d.execute_script(_JS_RECORDER)
+            self._last_url = d.current_url
+        except WebDriverException:
+            pass
+        if not self._poller or not self._poller.is_alive():
+            self._poller = threading.Thread(target=self._poll_loop, name="click-recorder", daemon=True)
+            self._poller.start()
+
+    def _poll_loop(self):
+        every = max(0.5, float(os.getenv("TRACK_INTERVAL", "1.5") or 1.5))
+        while True:
+            time.sleep(every)
+            if not self.driver or not self.lock.acquire(blocking=False):
+                continue          # an action is running: collect next time
+            try:
+                self.collect()
+            except Exception:
+                pass
+            finally:
+                self.lock.release()
+
+    def _by_ai(self, t):
+        return any(s - 0.3 <= t <= e + 0.8 for s, e in self.ai_windows)
+
+    def collect(self):
+        """Move the user's steps from the page into self.manual. Called with the lock held."""
+        d = self.driver
+        if not d:
+            return
+        try:
+            d.current_window_handle
+        except WebDriverException:
+            return
+        events = []
+        try:
+            if self.frame_path:
+                d.switch_to.default_content()
+            events = d.execute_script(_JS_RECORDER + _JS_COLLECT) or []
+            url = d.current_url
+            title = d.title
+        except WebDriverException:
+            return
+        finally:
+            if self.frame_path:
+                try:
+                    self._restore_frame()
+                except Exception:
+                    pass
+        now = time.time()
+        for e in sorted(events, key=lambda e: e.get("t") or 0):
+            t = (e.get("t") or 0) / 1000
+            if not t or self._by_ai(t):
+                continue
+            self._add(dict(e, t=t))
+        if url != self._last_url:
+            # a page change nobody clicked for here (typed address, back button, a link) and not Datasquint's doing
+            if not self._by_ai(now) and not (self.ai_windows and self.ai_windows[-1][1] >= self._last_poll - 0.5):
+                self._add({"ev": "page", "url": url, "title": title, "t": now})
+            self._last_url = url
+        self._last_poll = now
+
+    def _add(self, e):
+        if e.get("ev") == "type" and self.manual and self.manual[-1].get("ev") == "enter" \
+                and self.manual[-1].get("id") == e.get("id") and abs(self.manual[-1]["t"] - e["t"]) < 2:
+            return            # Enter already recorded the value
+        if e.get("ev") == "page" and self.manual and self.manual[-1].get("url") == e["url"] \
+                and e["t"] - self.manual[-1]["t"] < 5:
+            return            # the click just before already led here
+        self._seq += 1
+        self.manual.append(dict(e, seq=self._seq))
+
+    def manual_steps(self, limit=50, minutes=None):
+        """The user's latest steps, oldest first. Collects first, if the browser isn't busy."""
+        if self.driver and self.lock.acquire(timeout=2):
+            try:
+                self.collect()
+            except Exception:
+                pass
+            finally:
+                self.lock.release()
+        steps = list(self.manual)
+        if minutes:
+            cut = time.time() - minutes * 60
+            steps = [s for s in steps if s["t"] >= cut]
+        return steps[-limit:]
+
+    def clear_manual(self):
+        self.manual.clear()
+
     def take_notices(self):
         """Notes for the model about what changed by itself (window or tab closed), once."""
         with self.lock:
@@ -623,6 +811,7 @@ class Browser:
         if new:
             d.switch_to.window(new[-1])
             self.frame_path = []
+            self._watch()
             return " It opened a new tab; now working in that tab."
         return ""
 
@@ -881,6 +1070,7 @@ class Browser:
             except (IndexError, ValueError):
                 raise BrowserError(f"No tab {index}; there are {len(hs)}.")
             self.frame_path = []
+            self._watch()
             return f"Switched to tab {index}: {d.title!r}."
 
     def press(self, key):

@@ -449,6 +449,11 @@ dialog textarea{min-height:110px;resize:vertical}
   #sideResize{display:none}
   #messages{padding:16px 14px 30px}.composer{padding:8px 10px 12px}
 }
+#brStepsBox{margin:6px 0;font-size:13px}
+#brStepsBox summary{cursor:pointer;font-weight:600;padding:4px 0}
+ol.steps{margin:4px 0;padding-left:0;list-style:none;max-height:180px;overflow:auto;font-size:12px}
+ol.steps li{padding:2px 0;border-bottom:1px solid var(--line)}
+ol.steps time{color:var(--muted);font-variant-numeric:tabular-nums;margin-right:4px}
 .temp-help { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; color: var(--muted); }
 .temp-help li { padding: 2px 6px; border-radius: 4px; border-left: 3px solid transparent; }
 .temp-help li.on { color: var(--ink); background: color-mix(in srgb, var(--accent, #2f6f8f) 12%, transparent); border-left-color: var(--accent, #2f6f8f); }
@@ -1254,7 +1259,7 @@ async function send(text, atts, c = cur()){
         model: $("#model").value,
         temperature: state.settings.temperature,
         dbs: chatDbs(c),
-        browser: !!(c.browser && brCfg.available), visual: !!(c.browser && brCfg.available && brVisual()),
+        browser: !!(c.browser && brCfg.available), visual: !!(c.browser && brCfg.available && brVisual()), manual: brTrack(),
         system: state.settings.system,
         messages: c.messages.slice(0, -1).filter(m => !m.error).map(({role, content, attachments, removed}) => ({role, attachments,
           content: removed?.length ? `${content}\n\n[The user removed ${removed.length > 1 ? "these attachments" : "this attachment"} from the chat; it is no longer available: ${removed.join(", ")}]`.trim() : content }))
@@ -1450,6 +1455,17 @@ function brPick(){ const ids = (brStatus.browsers || []).map(b => b.id), saved =
   return brStatus.running ? brStatus.browser : ids.includes(saved) ? saved : (brStatus.default_browser || "edge"); }
 // Visual mode: the model gets a screenshot with numbered boxes after each step (needs a model that reads images).
 function brVisual(){ const v = localStorage.getItem("ds.visual"); return v === null ? !!brCfg.vision : v === "1"; }
+// Tell the model what the user clicked and typed in the browser window by hand.
+function brTrack(){ return localStorage.getItem("ds.trackClicks") !== "0"; }
+async function loadSteps(){
+  const box = $("#brSteps"); if (!box) return;
+  let r; try { r = await api("/api/browser/manual?limit=12"); } catch (e) { return; }
+  if (!r.tracking) { box.innerHTML = `<div class="note">Recording is off on this server (TRACK_CLICKS=0).</div>`; return; }
+  const hm = t => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  box.innerHTML = r.steps.length
+    ? `<ol class="steps">${r.steps.slice().reverse().map(s => `<li><time>${hm(s.t)}</time> ${esc(s.text)}</li>`).join("")}</ol>`
+    : `<div class="note">Nothing yet. Click or type in the ${esc(brName())} window and it shows here.</div>`;
+}
 function brName(id = brPick()){ return (brStatus.browsers || []).find(b => b.id === id)?.name || (id === "chrome" ? "Chrome" : "Edge"); }
 function updateBrToggle(){
   const t = $("#brToggle"), c = cur(), on = !!(c?.browser && brCfg.available);
@@ -1476,10 +1492,22 @@ function renderBrMenu(){
       <button id="brShot"${st.running ? "" : " disabled"}>Screenshot</button><button id="brSee"${st.running ? "" : " disabled"} title="The page text the model gets">What the model sees</button></div>
     <label class="sw" title="For AI models that read images. Each step sends a screenshot with numbered boxes on everything clickable, so the model clicks what it sees and can read charts or tiles into a table. Uses more tokens."><input type="checkbox" id="brVisual"> Visual mode <small style="opacity:.75">(vision model)</small></label>
     <div class="note" id="brVisualNote"${brVisual() ? "" : " hidden"}>The model sees a numbered screenshot after each step and can click by number or position, and copy charts or tiles into a table. The last ${brCfg.screenshots_kept ?? 3} screenshots are sent with each request.</div>
+    <details id="brStepsBox"><summary>Your steps in the window</summary>
+      <label class="sw" title="The AI is told what you clicked, typed and chose in the browser window yourself, so you can say &quot;save this table&quot; or &quot;do what I just did for LOT-102&quot;. Passwords are never recorded."><input type="checkbox" id="brTrack"> Tell the AI what I click</label>
+      <div id="brSteps"></div>
+      <div class="row2"><button id="brStepsClear" type="button">Clear</button></div>
+    </details>
     <div id="brOut"></div>
     <div class="note">Log in to your sites in the browser window yourself — the model never types passwords. Logins are kept in the app's own profile for each browser (PROFILE_DIR for Edge, CHROME_PROFILE_DIR for Chrome).</div>`;
   if ($("#brKind")) { $("#brKind").value = brPick();
     $("#brKind").onchange = () => { localStorage.setItem("ds.browserKind", $("#brKind").value); renderBrMenu(); updateBrToggle(); }; }
+  const tr = $("#brTrack"); tr.checked = brTrack();
+  tr.onchange = () => { localStorage.setItem("ds.trackClicks", tr.checked ? "1" : "0");
+    notify(tr.checked ? "The AI will be told what you click and type in the browser window." : "The AI won't be told what you click in the browser window."); };
+  const sb = $("#brStepsBox"); sb.open = localStorage.getItem("ds.stepsOpen") === "1";
+  sb.ontoggle = () => { localStorage.setItem("ds.stepsOpen", sb.open ? "1" : "0"); if (sb.open) loadSteps(); };
+  if (sb.open) loadSteps();
+  $("#brStepsClear").onclick = async () => { await api("/api/browser/manual/clear", { method: "POST" }); loadSteps(); };
   const vis = $("#brVisual"); vis.checked = brVisual();
   vis.onchange = () => { localStorage.setItem("ds.visual", vis.checked ? "1" : "0"); $("#brVisualNote").hidden = !vis.checked;
     notify(vis.checked ? "Visual mode on: the model gets a numbered screenshot after each browser step. It needs a model that reads images."
@@ -2769,6 +2797,7 @@ $("#saveSettings").onclick = () => {
   } else {
     refreshBrowser();
     setInterval(() => { if (!document.hidden && !jobOf()) refreshBrowser(); }, 10000);
+    setInterval(() => { if (!document.hidden && !$("#brMenu").hidden && $("#brStepsBox")?.open) loadSteps(); }, 3000);
   }
   const { models = [cfg.default_model] } = await fetch("/api/models").then(r => r.json()).catch(() => ({}));
   const sel = $("#model");

@@ -165,6 +165,8 @@ Some data only lives on web pages: an MES or traceability screen, a machine's we
 
 **Visual mode (for AI models that read images).** In the **Browser** menu, tick **Visual mode**. After each step the AI then sees a screenshot with a numbered box on everything clickable, the same numbers it uses to click, so it picks the button or tile it can actually see. It can also click a point on a chart or picture, and copy numbers from a chart or a page of tiles into a table (*"Save the oven temperatures shown as a table"*), which you can then sort and total like any other table. Values copied this way are the AI's reading of the picture, so check important ones; real tables on the page are still copied exactly. Leave it off for a text-only model: it can't read the pictures. Screenshots use more tokens, so only the last three are sent each time.
 
+**It knows what you clicked.** Whatever you click, type or choose in the browser window yourself is passed to the AI with your next message (passwords never: it only learns that one was typed). So you can do part of the job by hand and hand over: pick the date range and the line yourself, then say *"save this table"*; or search one lot yourself and say *"do the same for LOT-124 and LOT-125"*. **Browser → Your steps in the window** shows the list, with **Clear**. Untick *Tell the AI what I click* to keep them out. Only the tab Datasquint is working in is watched.
+
 **Ask for more.** Tell it to get data the page doesn't show yet:
 
 - *"Go through every page of the table and save all rows."*

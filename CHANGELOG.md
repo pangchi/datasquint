@@ -8,6 +8,11 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.24.0 — 2026-11-17
+
+### Added
+- **The user's own browser steps are tracked.** Clicks, typing, dropdown choices, Enter and page changes the user makes in the browser window by hand are recorded (passwords never) and given to the model with each message, with element ids and pages, so *"save this table"* or *"do what I just did for LOT-124"* work. The model's own steps are excluded. **Browser → Your steps in the window** lists them live, with **Clear** and a *Tell the AI what I click* switch. Covers the tab Datasquint works in (not other tabs or frames). `TRACK_CLICKS`, `MANUAL_STEPS_SHOWN`, `MANUAL_STEPS_MINUTES`, `TRACK_INTERVAL`; `GET /api/browser/manual`, `POST /api/browser/manual/clear`.
+
 ## 2.23.0 — 2026-11-17
 
 ### Added
