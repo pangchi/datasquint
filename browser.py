@@ -453,7 +453,7 @@ class Browser:
             try:
                 self._ensure_tab()
                 return {**base, "url": self.driver.current_url, "title": self.driver.title,
-                        "tabs": len(self._tabs()), "frame": self.frame_path}
+                        "tabs": len(self._tabs()), "tab": self._tab_index(), "frame": self.frame_path}
             except WebDriverException as e:
                 return {**base, "error": str(e).splitlines()[0]}
 
@@ -931,16 +931,68 @@ class Browser:
             return f"Clicked at ({x:.0f}, {y:.0f}){what}.{note}"
 
     def tabs(self):
+        """Open tabs: index, title, url, current (the one Datasquint works in), shown (in front in its window)."""
         with self.lock:
             d = self._d()
             cur = d.current_window_handle
             out = []
             for i, h in enumerate(self._tabs()):
-                d.switch_to.window(h)
-                out.append({"index": i, "title": d.title, "url": d.current_url, "current": h == cur})
+                try:
+                    d.switch_to.window(h)
+                    shown = d.execute_script("return document.visibilityState") == "visible"
+                    out.append({"index": i, "title": d.title, "url": d.current_url, "current": h == cur, "shown": shown})
+                except WebDriverException:
+                    continue      # closed meanwhile
             d.switch_to.window(cur)
             self._restore_frame()
             return out
+
+    FOLLOW = os.getenv("FOLLOW_ACTIVE_TAB", "1").strip() != "0"
+
+    def follow_shown_tab(self):
+        """If the user brought another tab to the front, work in that one from now on (FOLLOW_ACTIVE_TAB).
+        Returns a note when it switched, else None. Quick: does nothing with a single tab."""
+        if not self.FOLLOW or not self.driver:
+            return None
+        with self.lock:
+            if not self.alive():
+                return None
+            d = self.driver
+            try:
+                hs = self._tabs()
+                if len(hs) < 2:
+                    return None
+                cur = d.current_window_handle
+                d.switch_to.window(cur)
+                if d.execute_script("return document.visibilityState") == "visible":
+                    self._restore_frame()
+                    return None
+                for h in hs:
+                    if h == cur:
+                        continue
+                    d.switch_to.window(h)
+                    if d.execute_script("return document.visibilityState") == "visible":
+                        self.frame_path = []
+                        self._watch()
+                        note = (f"The user switched to another tab, so this now works in tab {hs.index(h)}: "
+                                f"{d.title!r} ({d.current_url}).")
+                        self.notices.append(note)
+                        return note
+                d.switch_to.window(cur)
+                self._restore_frame()
+            except WebDriverException:
+                pass
+            return None
+
+    def activate_tab(self, index):
+        """Switch to a tab and bring it to the front of its window (Browser menu)."""
+        with self.lock:
+            msg = self.switch_tab(index)
+            try:
+                self.driver.execute_cdp_cmd("Page.bringToFront", {})
+            except Exception:
+                pass
+            return msg
 
     # ----------------------------------------------------------------- acting
     def navigate(self, url):

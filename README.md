@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.24.0** · [Changelog](CHANGELOG.md)
+**Version 2.25.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -320,7 +320,9 @@ To use a browser you started yourself, start it with `--remote-debugging-port`, 
 
 **Tables become SQL tables.** `extract_table` and `paginate` save all rows as a CSV file attached to the chat (`lots.csv` above). It is loaded like any attached CSV: the model can query it with SQL as table `lots` (source `files`), filter, total and join it with other attached files, and you can see it in **Tables**, download it, or remove it. Numbers written with thousands separators (`1,234`) are saved as plain numbers.
 
-**Your own steps are tracked.** What you click, type, choose and press Enter on in the browser window yourself is recorded (passwords never: only *"typed a password"*) and given to the model with each message, oldest first, with the element ids and page, e.g. *"17:20:05 typed 'LOT-123' into [7:input:text Lot no] and pressed Enter"*. So you can set up a page by hand and say *"save this table"*, or *"do what I just did for LOT-124"*. The model's own steps aren't counted. **Browser → Your steps in the window** lists them, with **Clear** and *Tell the AI what I click* (per browser; off = the steps stay out of the prompt). Limits: steps in other tabs than the one Datasquint uses, and inside frames, aren't seen. `TRACK_CLICKS=0` turns recording off; `MANUAL_STEPS_SHOWN` (15) and `MANUAL_STEPS_MINUTES` (60) set how many go in the prompt.
+**Your own steps are tracked.** What you click, type, choose and press Enter on in the browser window yourself is recorded (passwords never: only *"typed a password"*) and given to the model with each message, oldest first, with the element ids and page, e.g. *"17:20:05 typed 'LOT-123' into [7:input:text Lot no] and pressed Enter"*. So you can set up a page by hand and say *"save this table"*, or *"do what I just did for LOT-124"*. The model's own steps aren't counted. **Browser → Your steps in the window** lists them, with **Clear** and *Tell the AI what I click* (per browser; off = the steps stay out of the prompt). Limits: only the tab Datasquint works in is watched (it follows the tab you bring to the front, see below), and steps inside frames aren't seen. `TRACK_CLICKS=0` turns recording off; `MANUAL_STEPS_SHOWN` (15) and `MANUAL_STEPS_MINUTES` (60) set how many go in the prompt.
+
+**Tabs.** The Browser menu shows which tab the AI works in (*tab 2 of 3*) and, with several open, lists them: **AI works here** marks the AI's tab, **on screen** the one in front in the window; click another to make the AI work there (it's brought to the front too). The model gets the same list with every message, and can switch itself with `switch_tab`. When you bring another tab to the front yourself, the AI follows it before its next step and is told so (`FOLLOW_ACTIVE_TAB=0` turns that off). If two windows are both visible, or the window is minimised, it stays where it is.
 
 **What the model sees** in the Browser menu shows exactly the page text the model gets. Check it if an answer seems to miss something. Data drawn on a canvas (some charts) isn't text; turn on **Visual mode** (with a vision model) so the model can read it from a screenshot and `save_table` it.
 
@@ -519,6 +521,7 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `SCREENSHOTS_KEPT` | `3` | Browser screenshots sent with each request in Visual mode; older ones are left out to save tokens |
 | `SCREENSHOT_MAX_MARKS` | `200` | Most numbered boxes drawn on one screenshot |
 | `POINTER_CLICKABLES` | `1` | List elements that are clickable only by their pointer cursor (`div` tiles, rows) as `[id:clickable …]`; `0` = off |
+| `FOLLOW_ACTIVE_TAB` | `1` | When the user brings another tab to the front, the AI works in that tab from its next step; `0` = stay in its own tab |
 | `TRACK_CLICKS` | `1` | Record what the user clicks, types and chooses in the browser window by hand and tell the model; `0` = off |
 | `MANUAL_STEPS_SHOWN` | `15` | Most of those steps put in the prompt |
 | `MANUAL_STEPS_MINUTES` | `60` | Only steps from the last this-many minutes |
@@ -658,6 +661,7 @@ All responses are JSON unless noted.
 - `POST /api/browser/start` — `{url?, headless?, browser?}` (`edge`/`chrome`; refused while the other is open); `POST /api/browser/close`; `POST /api/browser/navigate` — `{url, browser?}` (starts that browser if none is open). Each returns the status, or `{error}` with 400
 - `POST /api/browser/action` — `{action: "<the action block's JSON>", files: [chat attachment ids], browser?, visual?}` → `{action, title, text, attachments: [upload JSON], url}` or `{title, error, text}`; `text` is what the model receives. Tables are stored as uploads (CSV, loaded as SQL tables), screenshots as image uploads
 - `POST /api/browser/cancel` — stops a running `paginate` / `click_all` / `wait` at the next page or click
+- `GET /api/browser/tabs` — `{tabs: [{index, title, url, current, shown}]}`; `POST /api/browser/tab` `{index}` — make that tab the AI's and bring it to the front
 - `GET /api/browser/manual[?limit=]` — `{tracking, steps: [{t, ev, text, url, title}]}`, the user's own steps in the window; `POST /api/browser/manual/clear`
 - `GET /api/browser/screenshot` — `{image}` (PNG, base64); `GET /api/browser/page[?part=]` — `{text, chars}`, the page text the model gets
 

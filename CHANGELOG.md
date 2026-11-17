@@ -8,6 +8,13 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.25.0 — 2026-11-17
+
+### Added
+- **Current tab and tab switching.** The Browser menu and chip show which tab the AI works in (*tab 2 of 3*). With several tabs, the menu lists them, marking **AI works here** and **on screen**; clicking one makes the AI work there and brings it to the front. The model gets the list of open tabs with every message.
+- **Follows the tab you bring to the front** (`FOLLOW_ACTIVE_TAB`, default on): before its next step the AI moves to it and is told so. Steps you take there are tracked too.
+- `GET /api/browser/tabs`, `POST /api/browser/tab`.
+
 ## 2.24.0 — 2026-11-17
 
 ### Added

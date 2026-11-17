@@ -143,7 +143,9 @@ def describe(a):
 # ---------------------------------------------------------------------------------------------- page text
 def _header(snap):
     extra = []
-    if snap.get("tab"):
+    if (snap.get("tab_count") or 1) > 1:
+        extra.append(f"tab {snap.get('tab', 0)} of tabs 0-{snap['tab_count'] - 1}")
+    elif snap.get("tab"):
         extra.append(f"tab {snap['tab']}")
     if snap.get("frame"):
         extra.append(f"inside frame {snap['frame']}")
@@ -158,6 +160,10 @@ def _header(snap):
 
 def page_text(part=1):
     snap = browser.snapshot()
+    try:
+        snap["tab_count"] = len(browser._tabs())
+    except Exception:
+        pass
     text = snap["text"]
     parts = max(1, -(-len(text) // SNAPSHOT_CHARS))
     part = min(max(1, int(part or 1)), parts)
@@ -226,6 +232,8 @@ def execute(a, visual=False):
     """Run one action, and tell the model if the window or tab it was using had been closed meanwhile.
     In Visual mode, a marked screenshot of the result comes with every action that may change what's shown."""
     try:
+        if a["action"] not in ("switch_tab", "tabs"):
+            browser.follow_shown_tab()     # the user brought another tab to the front: work there
         with browser.ai_step():
             out = _execute(a)
     except BrowserError as e:
@@ -320,6 +328,7 @@ def _execute(a):
         return out
     if x == "tabs":
         out["text"] = "Tabs:\n" + "\n".join(f"{t['index']}: {t['title']} — {t['url']}" + (" (current)" if t["current"] else "")
+                                            + (" (in front on the user's screen)" if t.get("shown") and not t["current"] else "")
                                             for t in browser.tabs())
         return out
     if x == "wait":
@@ -455,7 +464,18 @@ def system_section(visual=False, manual=True):
                        "or ask the user to start it and open the page.)")
     try:
         t0 = time.time()
+        browser.follow_shown_tab()
+        notes = browser.take_notices()
+        tabs = browser.tabs()
         text, _ = page_text()
+        if len(tabs) > 1:
+            text = ("Open tabs (switch with {\"action\": \"switch_tab\", \"index\": N}):\n" +
+                    "\n".join(f"  {t['index']}: {t['title'] or '(no title)'} — {t['url']}"
+                              + (" ← you are reading this one" if t["current"] else "")
+                              + (" (in front on the user's screen)" if t["shown"] and not t["current"] else "")
+                              for t in tabs) + "\n\n" + text)
+        if notes:
+            text = " ".join(notes) + "\n\n" + text
         log.debug("Page read for the prompt in %.1f s", time.time() - t0)
         return head + (manual_section() if manual else "") + "\n\n=== Current page ===\n" + text
     except Exception as e:

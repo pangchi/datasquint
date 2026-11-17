@@ -167,6 +167,8 @@ Some data only lives on web pages: an MES or traceability screen, a machine's we
 
 **It knows what you clicked.** Whatever you click, type or choose in the browser window yourself is passed to the AI with your next message (passwords never: it only learns that one was typed). So you can do part of the job by hand and hand over: pick the date range and the line yourself, then say *"save this table"*; or search one lot yourself and say *"do the same for LOT-124 and LOT-125"*. **Browser → Your steps in the window** shows the list, with **Clear**. Untick *Tell the AI what I click* to keep them out. Only the tab Datasquint is working in is watched.
 
+**Tabs.** The **Browser** menu shows which tab the AI is working in. With several tabs open it lists them all: **AI works here** marks the AI's tab and **on screen** the one you're looking at. Click a tab in the list to move the AI there. If you simply switch tabs in the browser window yourself, the AI follows you before its next step, so *"save the table on this page"* means the page in front of you. You can also just tell it *"switch to the Alarms tab"*.
+
 **Ask for more.** Tell it to get data the page doesn't show yet:
 
 - *"Go through every page of the table and save all rows."*

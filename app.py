@@ -1406,6 +1406,14 @@ def browser_status():
     if not webtools.available():
         return jsonify(available=False, enabled=webtools.ENABLED, running=False, error=webtools.off_reason())
     from browser import BROWSERS, default_kind
+    b = webtools.browser
+    if b.driver and b.lock.acquire(blocking=False):     # the user brought another tab to the front: follow it
+        try:
+            b.follow_shown_tab()
+        except Exception:
+            pass
+        finally:
+            b.lock.release()
     return jsonify(available=True, vision=webtools.VISION, default_browser=default_kind(),
                    browsers=[{"id": k, "name": b["name"], "attach": os.getenv(b["env"] + "_DEBUGGER", "")}
                              for k, b in BROWSERS.items()],
@@ -1427,6 +1435,32 @@ def browser_start():
         return jsonify(available=True, **webtools.browser.status())
     except Exception as e:
         blog.error("Browser didn't start: %s", e)
+        return _berr(e)
+
+
+@app.get("/api/browser/tabs")
+def browser_tabs():
+    """Open tabs: {tabs: [{index, title, url, current, shown}]}; current = the one the AI works in."""
+    try:
+        _browser_ready()
+        if not webtools.browser.alive():
+            return jsonify(tabs=[])
+        _browser_locked(webtools.browser.follow_shown_tab)
+        return jsonify(tabs=_browser_locked(webtools.browser.tabs))
+    except Exception as e:
+        return _berr(e)
+
+
+@app.post("/api/browser/tab")
+def browser_tab():
+    """Make tab {index} the one the AI works in, and bring it to the front."""
+    data = request.get_json(silent=True) or {}
+    try:
+        _browser_ready()
+        msg = _browser_locked(webtools.browser.activate_tab, data.get("index", 0))
+        blog.info("Tab switched from the menu: %s", msg)
+        return jsonify(message=msg, tab_list=_browser_locked(webtools.browser.tabs), **webtools.browser.status())
+    except Exception as e:
         return _berr(e)
 
 
