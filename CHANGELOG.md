@@ -8,6 +8,24 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.23.0 — 2026-11-17
+
+### Added
+- **Visual mode** for the browser (Browser menu; for AI models that read images; default from `VISION`). After every step the model gets a screenshot with a numbered box on each clickable element in view, using the same ids as the page text, plus a list of them with their positions, so it clicks what it sees.
+  - `click_at` clicks a point of the screenshot: for charts, canvases, maps and icons with no id.
+  - `save_table` saves values the model read from the screen (charts, tiles, pictures of tables) as a CSV attached to the chat, so SQL can use them. The result says they were read, not extracted.
+  - Only the last `SCREENSHOTS_KEPT` (3) screenshots are sent with each request; older ones are replaced by a note, to keep token use in check.
+- **Clickable-by-cursor elements**: `div`, `span`, tile and row elements that a page makes clickable with its own code (React, Vue, Angular) are detected by their pointer cursor and get ids like buttons, shown as `[12:clickable …]`, in text mode too. `POINTER_CLICKABLES=0` turns this off.
+- `SCREENSHOT_MAX_MARKS`, `SAVE_TABLE_MAX_ROWS`.
+
+### Changed
+- `screenshot` is now always available (a read action), marked with numbered boxes unless `"marks": false`, and scaled to the page's CSS pixels.
+
+## 2.22.1 — 2026-11-16
+
+### Fixed
+- **Browser stuck after its window was closed** (*"The Edge window has been closed, so I can't navigate or click anything"*). If the tab in use is closed, the next action now carries on in the most recently opened tab that's still open. If every window was closed, the next action opens a new window (same profile, so logins are kept). The model is told either way, so it reopens the page and continues.
+
 ## 2.22.0 — 2026-11-12
 
 ### Added

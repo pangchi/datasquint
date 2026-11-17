@@ -9,6 +9,7 @@ All calls take a lock, so the Flask threads and the agent loop never drive the b
 """
 import base64
 import hashlib
+import io
 import os
 import re
 import threading
@@ -16,8 +17,9 @@ import time
 
 from selenium import webdriver
 from selenium.common.exceptions import (ElementClickInterceptedException, ElementNotInteractableException,
-                                        JavascriptException, NoSuchElementException, NoSuchFrameException,
+                                        JavascriptException, NoSuchElementException, NoSuchFrameException, NoSuchWindowException,
                                         StaleElementReferenceException, TimeoutException, WebDriverException)
+from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
@@ -48,8 +50,22 @@ function visible(el) {
 }
 function clean(t) { return (t || '').replace(/\s+/g, ' ').trim(); }
 function cut(t, n) { t = clean(t); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
+const POINTER = %POINTER%;
+const POINTER_TAGS = /^(DIV|SPAN|LI|TD|TH|TR|IMG|I|P|LABEL|DT|DD|H[1-6]|STRONG|B|EM|SMALL|SECTION|ARTICLE)$/;
+// Clickable by look only: a pointer cursor (set by the page's own click handler code), the outermost one of its
+// kind, with no proper button or link inside or around it. Common in React/Vue/Angular apps.
+function pointerish(el) {
+  if (!POINTER || !POINTER_TAGS.test(el.tagName)) return false;
+  let s; try { s = getComputedStyle(el); } catch (e) { return false; }
+  if (s.cursor !== 'pointer') return false;
+  const p = el.parentElement;
+  if (p && getComputedStyle(p).cursor === 'pointer') return false;
+  if ((p && p.closest(INTER)) || el.querySelector(INTER)) return false;
+  return true;
+}
 function isInter(el) {
-  if (!el.matches || !el.matches(INTER)) return false;
+  if (!el.matches) return false;
+  if (!el.matches(INTER)) return pointerish(el);
   if (el.matches('[tabindex="-1"]:not(a,button,input,select,textarea)')) return false;
   return true;
 }
@@ -59,6 +75,7 @@ function disabled(el) {
 }
 function kind(el) {
   const tag = el.tagName.toLowerCase(), role = el.getAttribute('role');
+  if (!el.matches(INTER)) return 'clickable';
   if (tag === 'input') return 'input:' + (el.type || 'text');
   if (tag === 'a') return 'link';
   if (role) return role;
@@ -140,6 +157,57 @@ function readTable(t, withIds, maxRows) {
   });
   return {head: head, rows: body, total: total};
 }
+"""
+_JS_HELPERS = _JS_HELPERS.replace("%POINTER%", "true" if os.getenv("POINTER_CLICKABLES", "1").strip() != "0" else "false")
+
+
+# Numbered boxes over every clickable element in view, for a marked screenshot. The numbers are the same ids
+# the page text uses, so the model can click what it sees. arguments[0] false removes them.
+_JS_MARKS = _JS_HELPERS + r"""
+const old = document.getElementById('__psq_marks'); if (old) old.remove();
+if (!arguments[0]) return [];
+const vw = innerWidth, vh = innerHeight, cap = arguments[1] || 200;
+const layer = document.createElement('div');
+layer.id = '__psq_marks';
+layer.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2147483647';
+const colours = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#008080', '#9a6324', '#c71585'];
+const out = [];
+function scan(root) {
+  for (const el of root.querySelectorAll('*')) {
+    if (out.length >= cap) return;
+    if (el.shadowRoot) scan(el.shadowRoot);
+    if (SKIP.has(el.tagName.toUpperCase()) || !isInter(el) || !visible(el)) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4 || r.bottom <= 0 || r.right <= 0 || r.top >= vh || r.left >= vw) continue;
+    const cx = Math.min(vw - 1, Math.max(0, r.left + r.width / 2)), cy = Math.min(vh - 1, Math.max(0, r.top + r.height / 2));
+    const top = document.elementFromPoint(cx, cy);
+    if (top && top !== el && !el.contains(top) && !top.contains(el)) continue;   // hidden behind something
+    const id = psqId(el), c = colours[out.length % colours.length];
+    const b = document.createElement('div');
+    b.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;` +
+      `outline:2px solid ${c};outline-offset:-1px;box-sizing:border-box`;
+    const t = document.createElement('div');
+    t.textContent = id;
+    // wide rows sit close together: label inside at the right end, where it covers least; small things: above
+    const inside = r.width > 160;
+    const lx = inside ? Math.min(vw, r.right) - 2 - (String(id).length * 7 + 6) : Math.max(0, r.left);
+    const ly = inside ? Math.max(0, r.top + 1) : Math.max(0, r.top - 14);
+    t.style.cssText = `position:fixed;left:${lx}px;top:${ly}px;background:${c};` +
+      'color:#fff;font:bold 11px/13px Arial,sans-serif;padding:0 3px;border-radius:2px;white-space:nowrap';
+    layer.append(b, t);
+    out.push({id: +id, kind: kind(el), label: label(el), x: Math.round(cx), y: Math.round(cy)});
+  }
+}
+scan(document);
+document.documentElement.appendChild(layer);
+return out;
+"""
+
+_JS_AT_POINT = _JS_HELPERS + r"""
+const el = document.elementFromPoint(arguments[0], arguments[1]);
+if (!el) return null;
+const t = (el.closest && el.closest(INTER)) || el;
+return {id: +psqId(t), kind: isInter(t) ? kind(t) : t.tagName.toLowerCase(), label: label(t) || cut(t.innerText || '', 60)};
 """
 
 # Page outline: text in reading order, interactive elements as markers, tables as a short sample.
@@ -311,6 +379,7 @@ class Browser:
         self.mode = None              # "launched" or "attached"
         self.kind = default_kind()    # "edge" or "chrome": the one running, or the next to start
         self.hidden = set()           # handles that aren't real tabs (the New Tab page footer)
+        self.notices = []             # things the model should hear with its next action's result
 
     # ----------------------------------------------------------------- lifecycle
     def status(self):
@@ -319,20 +388,59 @@ class Browser:
                 return {"running": False}
             base = {"running": True, "mode": self.mode, "browser": self.kind, "browser_name": BROWSERS[self.kind]["name"]}
             try:
+                self._ensure_tab()
                 return {**base, "url": self.driver.current_url, "title": self.driver.title,
                         "tabs": len(self._tabs()), "frame": self.frame_path}
             except WebDriverException as e:
                 return {**base, "error": str(e).splitlines()[0]}
 
     def alive(self):
+        """Is there a browser with at least one tab to work in? If its windows were all closed, let go of it,
+        so the next action starts a fresh one (or reports that the attached browser is gone)."""
         if not self.driver:
             return False
         try:
-            self.driver.window_handles
-            return True
+            if any(h not in self.hidden for h in self.driver.window_handles):
+                return True
         except WebDriverException:
-            self.driver = None
-            return False
+            pass
+        name = BROWSERS[self.kind]["name"]
+        self._release()
+        self.notices.append(f"The {name} window had been closed" + (
+            ", so a new one was opened: open the page again if you need it." if _env_bool("AUTO_START", True)
+            and self.mode != "attached" else "."))
+        return False
+
+    def _release(self):
+        """Forget the current session without touching the user's own windows."""
+        d, self.driver = self.driver, None
+        try:
+            if self.mode == "attached":
+                d.service.stop()
+            else:
+                d.quit()
+        except Exception:
+            pass
+        self.frame_path, self.hidden = [], set()
+
+    def _ensure_tab(self):
+        """If the tab being used was closed but others are open, carry on in the most recently opened one."""
+        d = self.driver
+        try:
+            d.current_window_handle
+            return
+        except NoSuchWindowException:
+            pass
+        except WebDriverException as e:
+            if "no such window" not in str(e).lower() and "target window already closed" not in str(e).lower():
+                raise
+        tabs = self._tabs()
+        if not tabs:
+            return
+        d.switch_to.window(tabs[-1])
+        self.frame_path = []
+        self.notices.append(f"The tab in use had been closed, so this continues in another open tab: "
+                            f"{d.title!r} ({d.current_url}).")
 
     def start(self, headless=None, attach=None, kind=None):
         """Launch Edge or Chrome (or attach to one started with --remote-debugging-port). Reuses a live session;
@@ -445,11 +553,25 @@ class Browser:
 
     def _d(self):
         if not self.alive():
+            if self.mode == "attached" and not os.getenv(BROWSERS[self.kind]["env"] + "_DEBUGGER", "").strip():
+                self.mode = None
             if _env_bool("AUTO_START", True):
-                self.start()
+                try:
+                    self.start()
+                except BrowserError as e:
+                    self.notices.clear()
+                    raise BrowserError(f"The {BROWSERS[self.kind]['name']} window was closed and a new one couldn't "
+                                       f"be opened: {e}")
             else:
                 raise BrowserError("The browser isn't running. Press Start browser first.")
+        self._ensure_tab()
         return self.driver
+
+    def take_notices(self):
+        """Notes for the model about what changed by itself (window or tab closed), once."""
+        with self.lock:
+            out, self.notices = self.notices, []
+            return out
 
     # ----------------------------------------------------------------- helpers
     def _settle(self, quiet_ms=None, max_ms=None):
@@ -558,6 +680,66 @@ class Browser:
     def screenshot_b64(self):
         with self.lock:
             return base64.b64encode(self._d().get_screenshot_as_png()).decode()
+
+    def screenshot(self, marks=True):
+        """A picture of what's in view, scaled so 1 image pixel = 1 CSS pixel (what click_at uses). With marks,
+        every clickable element in view gets a numbered box first (the ids in the page text).
+        Returns (png bytes, [{id, kind, label, x, y}], (width, height))."""
+        with self.lock:
+            d = self._d()
+            d.switch_to.default_content()
+            listed = []
+            try:
+                if marks:
+                    listed = d.execute_script(_JS_MARKS, True, int(os.getenv("SCREENSHOT_MAX_MARKS", "200"))) or []
+                png = d.get_screenshot_as_png()
+            finally:
+                if marks:
+                    try:
+                        d.execute_script(_JS_MARKS, False)
+                    except WebDriverException:
+                        pass
+                self._restore_frame()
+            vw, vh = d.execute_script("return [innerWidth, innerHeight]")
+            try:
+                from PIL import Image
+                im = Image.open(io.BytesIO(png))
+                if im.width != vw and vw:
+                    im = im.resize((int(vw), max(1, round(im.height * vw / im.width))), Image.LANCZOS)
+                buf = io.BytesIO()
+                im.convert("RGB").save(buf, "PNG", optimize=True)
+                png = buf.getvalue()
+            except Exception:
+                pass     # Pillow missing: send it unscaled (on 100% display scaling it's the same)
+            return png, listed, (int(vw), int(vh))
+
+    def click_at(self, x, y):
+        """Click at a point of the latest screenshot (CSS pixels from the top-left of the window's page area)."""
+        with self.lock:
+            d = self._d()
+            try:
+                x, y = float(x), float(y)
+            except (TypeError, ValueError):
+                raise BrowserError("click_at needs numbers: {\"action\": \"click_at\", \"x\": 420, \"y\": 310}.")
+            d.switch_to.default_content()
+            self.frame_path = []
+            vw, vh = d.execute_script("return [innerWidth, innerHeight]")
+            if not (0 <= x < vw and 0 <= y < vh):
+                raise BrowserError(f"({x:.0f}, {y:.0f}) is outside the window ({vw} x {vh}). Use a point from the "
+                                   "latest screenshot, or scroll first.")
+            hit = d.execute_script(_JS_AT_POINT, x, y) or {}
+            before, old_url = list(d.window_handles), d.current_url
+            ab = ActionBuilder(d)
+            ab.pointer_action.move_to_location(int(x), int(y))
+            ab.pointer_action.click()
+            ab.perform()
+            time.sleep(0.15)
+            note = self._handle_new_tab(before)
+            self._settle()
+            if d.current_url != old_url:
+                note += f" Page is now {d.current_url}."
+            what = f" on [{hit['id']}:{hit['kind']} {hit['label']}]" if hit.get("id") else ""
+            return f"Clicked at ({x:.0f}, {y:.0f}){what}.{note}"
 
     def tabs(self):
         with self.lock:

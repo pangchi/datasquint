@@ -784,11 +784,31 @@ def fmt_doc(label, body):
     return f"--- File: {label} ---\n{body}\n--- End of {label} ---"
 
 
-def build_content(msg, ftables=None):
+SCREENSHOTS_KEPT = max(0, int(os.getenv("SCREENSHOTS_KEPT", "3") or 3))
+
+
+def _is_screenshot(a):
+    name = (a.get("name") if isinstance(a, dict) else "") or ""
+    return name.startswith("screenshot-") and name.endswith(".png")
+
+
+def screenshot_messages(raw):
+    """Indexes of the messages whose browser screenshots are still sent: the last SCREENSHOTS_KEPT that have
+    one. Older screenshots are left out (each costs about a thousand tokens or more); the text with them stays."""
+    idx = [i for i, m in enumerate(raw) if any(_is_screenshot(a) for a in (m.get("attachments") or []))]
+    return set(idx[-SCREENSHOTS_KEPT:]) if SCREENSHOTS_KEPT else set()
+
+
+def build_content(msg, ftables=None, drop_screenshots=False):
     """Turn a stored message plus attachment ids into OpenAI message content."""
     text = msg.get("content") or ""
     if msg.get("role") != "user" or not msg.get("attachments"):
         return text
+    if drop_screenshots and any(_is_screenshot(a) for a in msg["attachments"]):
+        msg = dict(msg, attachments=[a for a in msg["attachments"] if not _is_screenshot(a)])
+        text += "\n\n(An older screenshot was here; left out to save tokens.)"
+        if not msg["attachments"]:
+            return text
     docs, images = collect_attachments(msg, ftables)
     text = "\n\n".join([text] + [fmt_doc(l, b) for l, b in docs]).strip()
     return with_images(text, images)
@@ -912,6 +932,10 @@ def update_install():
     return jsonify(result)
 
 
+def app_screens():
+    return SCREENSHOTS_KEPT
+
+
 @app.get("/api/config")
 def config():
     return jsonify(version=VERSION, default_model=DEFAULT_MODEL, system_prompt=SYSTEM_PROMPT, base_url=BASE_URL,
@@ -919,7 +943,7 @@ def config():
                    table_extensions=sorted(filesql.TABLE_EXTS) if filesql.available() else [], max_send_chars=MAX_SEND_CHARS, allowed_extensions=sorted(ALLOWED_EXTS),
                    special_names=sorted(SPECIAL_NAMES),
                    browser={"enabled": webtools.ENABLED, "available": webtools.available(), "error": webtools.off_reason(),
-                            "read_actions": sorted(webtools.READ_ACTIONS), "vision": webtools.VISION,
+                            "read_actions": sorted(webtools.READ_ACTIONS), "vision": webtools.VISION, "screenshots_kept": app_screens(),
                             "auto_click": os.getenv("AUTO_CLICK", "0") == "1",
                             "max_steps": max(0, int(os.getenv("BROWSER_MAX_STEPS", "15") or 15))})
 
@@ -1474,7 +1498,7 @@ def browser_action():
         _browser_ready()
         if data.get("browser") and not webtools.browser.alive():   # nothing open: start the one picked in the menu
             _browser_locked(webtools.browser.start, kind=data.get("browser"))
-        res = webtools.execute(action)
+        res = webtools.execute(action, visual=bool(data.get("visual")))
     except Exception as e:
         msg = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
         if not isinstance(e, webtools.BrowserError):
@@ -1548,9 +1572,11 @@ def chat():
                       "Tell the user if they ask for data.)").strip()
     if data.get("browser") and webtools.ENABLED:
         # read now, so the model sees the page as it is at this moment (after the last click)
-        system = (system + "\n\n" + webtools.system_section()).strip()
+        system = (system + "\n\n" + webtools.system_section(visual=bool(data.get("visual")))).strip()
 
-    messages = [{"role": m.get("role", "user"), "content": build_content(m, ftables)} for m in raw]
+    keep = screenshot_messages(raw)
+    messages = [{"role": m.get("role", "user"), "content": build_content(m, ftables, i not in keep)}
+                for i, m in enumerate(raw)]
     if system:
         messages = [{"role": "system", "content": system}] + messages
 

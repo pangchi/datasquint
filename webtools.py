@@ -52,14 +52,17 @@ def _int(name, default):
 SNAPSHOT_CHARS = _int("BROWSER_SNAPSHOT_CHARS", "8000")      # page text per request; long pages come in parts
 OBS_TABLE_ROWS = _int("BROWSER_RESULT_ROWS", "30")           # rows of an extracted table shown to the model
 PAGINATE_MAX_PAGES = _int("PAGINATE_MAX_PAGES", "200")
-VISION = os.getenv("VISION", "0").strip() == "1"
+VISION = os.getenv("VISION", "0").strip() == "1"     # default for Visual mode (Browser menu), for vision models
+SAVE_TABLE_MAX_ROWS = _int("SAVE_TABLE_MAX_ROWS", "2000")
 
 # Actions that only read the page run without asking; the rest need Run (or Auto-click).
-READ_ACTIONS = {"snapshot", "extract_table", "extract_text", "find", "tabs", "frame", "switch_tab", "scroll", "wait"}
-ACT_ACTIONS = {"navigate", "click", "type", "select", "press", "back", "paginate", "click_all"}
-if VISION:
-    READ_ACTIONS.add("screenshot")
+READ_ACTIONS = {"snapshot", "extract_table", "extract_text", "find", "tabs", "frame", "switch_tab", "scroll", "wait",
+                "screenshot", "save_table"}
+ACT_ACTIONS = {"navigate", "click", "type", "select", "press", "back", "paginate", "click_all", "click_at"}
 ALL_ACTIONS = READ_ACTIONS | ACT_ACTIONS
+# after these, Visual mode sends a fresh marked screenshot so the model sees what changed
+LOOK_AFTER = {"navigate", "click", "type", "select", "press", "back", "scroll", "click_at", "click_all", "snapshot",
+              "switch_tab", "frame", "wait"}
 
 cancel_event = threading.Event()      # set by the Stop button; checked between pages / clicks
 
@@ -128,6 +131,12 @@ def describe(a):
         return f"Extract table {a.get('table', 0)}"
     if x == "snapshot":
         return "Read the page" + (f" (part {a['part']})" if a.get("part") else "")
+    if x == "click_at":
+        return f"Click at ({a.get('x')}, {a.get('y')})"
+    if x == "screenshot":
+        return "Screenshot" + ("" if a.get("marks", True) else " (no marks)")
+    if x == "save_table":
+        return f"Save the table read from the screen as {csv_name(a.get('save_as'), 0)}"
     return x.replace("_", " ").capitalize() + " " + json.dumps({k: v for k, v in a.items() if k != "action"})
 
 
@@ -204,7 +213,51 @@ def _rows_text(head, rows, limit):
 
 
 # ---------------------------------------------------------------------------------------------- running
-def execute(a):
+def marks_text(listed, size):
+    """The marks in a screenshot as text, so the model can match numbers to elements without guessing."""
+    if not listed:
+        return f"Screenshot attached ({size[0]} x {size[1]} px). No clickable elements are in view."
+    lines = [f"[{m['id']}:{m['kind']} {m['label']}] at ({m['x']}, {m['y']})" for m in listed]
+    return (f"Screenshot attached ({size[0]} x {size[1]} px; x/y in pixels from its top-left). Numbered boxes mark "
+            f"the clickable elements; click one with {{\"action\": \"click\", \"id\": N}}:\n" + "\n".join(lines))
+
+
+def execute(a, visual=False):
+    """Run one action, and tell the model if the window or tab it was using had been closed meanwhile.
+    In Visual mode, a marked screenshot of the result comes with every action that may change what's shown."""
+    try:
+        out = _execute(a)
+    except BrowserError as e:
+        notes = browser.take_notices()
+        raise BrowserError(" ".join(notes + [str(e)])) if notes else e
+    if visual and a["action"] in LOOK_AFTER and not out.get("png"):
+        try:
+            png, listed, size = browser.screenshot(marks=True)
+            out["png"] = png
+            out["text"] = (out["text"] or "").rstrip() + "\n\n" + marks_text(listed, size)
+        except Exception as e:     # the action itself worked: don't fail it over the picture
+            out["text"] = (out["text"] or "").rstrip() + f"\n\n(No screenshot: {str(e).splitlines()[0][:150]})"
+    notes = browser.take_notices()
+    if notes:
+        out["text"] = " ".join(notes) + "\n\n" + (out["text"] or "")
+    return out
+
+
+def save_table(a):
+    """A table the model read off the screen (a chart, a canvas, a layout that isn't an HTML table) as a CSV."""
+    cols, rows = a.get("columns"), a.get("rows")
+    if not isinstance(rows, list) or not rows or not all(isinstance(r, (list, tuple)) for r in rows):
+        raise BrowserError('save_table needs "rows": a list of rows, each a list of values, e.g. '
+                           '{"action": "save_table", "save_as": "lots", "columns": ["lot", "qty"], "rows": [["A1", 5]]}.')
+    if len(rows) > SAVE_TABLE_MAX_ROWS:
+        raise BrowserError(f"At most {SAVE_TABLE_MAX_ROWS} rows (SAVE_TABLE_MAX_ROWS). For a long HTML table use "
+                           "extract_table or paginate instead.")
+    head = [str(c) for c in cols] if isinstance(cols, (list, tuple)) else []
+    rows = [["" if v is None else str(v) for v in r] for r in rows]
+    return head, rows
+
+
+def _execute(a):
     """Run one action. Returns {"text", "csv": (name, bytes) | None, "png": bytes | None}.
 
     Raises BrowserError for things the model should fix (no such element, bad URL, …).
@@ -242,8 +295,17 @@ def execute(a):
         out["text"] = note + ".\n" + _rows_text(head, rows, OBS_TABLE_ROWS)
         return out
     if x == "screenshot":
-        out["png"] = base64.b64decode(browser.screenshot_b64())
-        out["text"] = "Screenshot attached."
+        png, listed, size = browser.screenshot(marks=a.get("marks", True) is not False)
+        out["png"] = png
+        out["text"] = marks_text(listed, size) if a.get("marks", True) is not False else \
+            f"Screenshot attached ({size[0]} x {size[1]} px)."
+        return out
+    if x == "save_table":
+        head, rows = save_table(a)
+        name = csv_name(a.get("save_as"), 0)
+        out["csv"] = (name, table_csv(head, rows))
+        out["text"] = (f"{len(rows)} rows read from the screen (by you, not extracted from the page: check them "
+                       "against the screenshot).\n" + _rows_text(head, rows, OBS_TABLE_ROWS))
         return out
     if x == "extract_text":
         txt = browser.text(a.get("selector"))
@@ -269,6 +331,8 @@ def execute(a):
         out["text"] = browser.navigate(a.get("url", ""))
     elif x == "click":
         out["text"] = browser.click(a.get("id"))
+    elif x == "click_at":
+        out["text"] = browser.click_at(a.get("x"), a.get("y"))
     elif x == "type":
         out["text"] = browser.type(a.get("id"), a.get("text", ""), enter=bool(a.get("enter")))
     elif x == "select":
@@ -326,12 +390,21 @@ Rules:
 
 _SCREENSHOT_LINE = '\n- {"action": "screenshot"}  attaches an image of the window (charts, canvases, colours)'
 
+VISUAL_SECTION = """
 
-def system_section():
+Visual mode is on: you can see the page. After each step you get a screenshot in which every clickable element in view has a numbered box; the number is the same id as in the page text, and the result lists them as [id:kind label] at (x, y).
+- Prefer clicking by the number on the box you can see: {"action": "click", "id": N}. Check the label matches what you mean.
+- For something with no box (a point on a chart, a canvas, a map, an icon), use {"action": "click_at", "x": 420, "y": 310} with pixel coordinates from the latest screenshot (0,0 is its top-left). Then check the next screenshot to see it worked.
+- {"action": "screenshot"} looks again without doing anything; "marks": false for a clean picture.
+- When data is shown but isn't an HTML table (a chart, a dashboard of tiles, a picture of a table), read it from the screenshot and save it with {"action": "save_table", "save_as": "readings", "columns": ["time", "temp_c"], "rows": [["08:00", 182.5], ["09:00", 184.0]]}. It becomes a CSV attached to the chat, which you can query with SQL. Copy values exactly as shown; never estimate values you can't read clearly: scroll, use the page's own zoom or filter, or say which values were unreadable. For real HTML tables still use extract_table or paginate: they are exact and get every row.
+- Images cost many tokens: only the last few screenshots are kept in the conversation."""
+
+
+def system_section(visual=False):
     """Browser instructions plus the page open now, for the system prompt ("" when turned off)."""
     if not ENABLED:
         return ""
-    head = INSTRUCTIONS % (_SCREENSHOT_LINE if VISION else "")
+    head = INSTRUCTIONS % ("" if visual else (_SCREENSHOT_LINE if VISION else "")) + (VISUAL_SECTION if visual else "")
     if browser is not None:
         from browser import BROWSERS
         head = head.replace("BROWSER_NAME", BROWSERS[browser.kind]["name"])

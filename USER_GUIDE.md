@@ -156,10 +156,14 @@ Some data only lives on web pages: an MES or traceability screen, a machine's we
 
 **Turn it on.** Click **Browser** at the top and tick *Use the browser in this chat*. Choose **Edge** or **Chrome** and press **Start**, or type the page address and press **Go**. If the site needs a login, log in yourself in the browser window that opens. The AI never types passwords, and the browser remembers your login next time. Edge and Chrome keep separate logins, and only one can be open at a time: **Close** it to switch.
 
+**If you close the window or a tab.** Closing the tab the AI was using is fine: it carries on in another tab that's still open (the most recently opened one) and tells you which. If you close the whole window, the next step opens a new one, where you're still logged in; the AI is told, so it opens the page again. You can also open your own tabs in that window and ask the AI to use them (*"switch to the tab with the lot report"*).
+
 **Ask about what's on screen.** The AI always sees the page that's open now, so you can simply ask:
 
 - *"Summarise this page."*
 - *"Which lots are on HOLD?"*
+
+**Visual mode (for AI models that read images).** In the **Browser** menu, tick **Visual mode**. After each step the AI then sees a screenshot with a numbered box on everything clickable, the same numbers it uses to click, so it picks the button or tile it can actually see. It can also click a point on a chart or picture, and copy numbers from a chart or a page of tiles into a table (*"Save the oven temperatures shown as a table"*), which you can then sort and total like any other table. Values copied this way are the AI's reading of the picture, so check important ones; real tables on the page are still copied exactly. Leave it off for a text-only model: it can't read the pictures. Screenshots use more tokens, so only the last three are sent each time.
 
 **Ask for more.** Tell it to get data the page doesn't show yet:
 

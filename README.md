@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.22.0** · [Changelog](CHANGELOG.md)
+**Version 2.23.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -295,7 +295,9 @@ It's on by default; `BROWSER_ENABLED=0` in `.env` turns it off for everyone on t
 
 **Use:** open the **Browser** menu, tick *Use the browser in this chat*, pick **Edge** or **Chrome**, and press **Start** (or type a URL and **Go**). The pick is remembered in your browser; `BROWSER=edge|chrome` sets the default. Log in to your site in the browser window yourself: the model never types passwords. Each browser uses the app's own profile, so logins persist between runs: `PROFILE_DIR` (Edge, default `./edge-profile`) and `CHROME_PROFILE_DIR` (Chrome, default `./chrome-profile`). They can't share one. Only one browser is open at a time; close it to switch.
 
-To use a browser you started yourself, start it with `--remote-debugging-port`, e.g. `msedge.exe --remote-debugging-port=9222 --user-data-dir=C:\edge-debug` or `chrome.exe --remote-debugging-port=9223 --user-data-dir=C:\chrome-debug`, and set `EDGE_DEBUGGER=127.0.0.1:9222` or `CHROME_DEBUGGER=127.0.0.1:9223`. The **Start** button then reads **Attach to …**, and closing leaves your window open.
+To use a browser you started yourself, start it with `--remote-debugging-port`, e.g. `msedge.exe --remote-debugging-port=9222 --user-data-dir=C:\edge-debug` or `chrome.exe --remote-debugging-port=9223 --user-data-dir=C:\chrome-debug`, and set `EDGE_DEBUGGER=127.0.0.1:9222` or `CHROME_DEBUGGER=127.0.0.1:9223`. The **Start** button then reads **Attach to …**, and closing leaves your window open. Recent Edge and Chrome versions refuse `--remote-debugging-port` on your everyday profile, so `--user-data-dir` must point elsewhere; to keep Datasquint's logins, use its own profile folder (`edge-profile` / `chrome-profile` in the Datasquint folder) while Datasquint isn't running its own window.
+
+**Closed windows and tabs**: if the tab in use is closed, the next action carries on in the most recently opened tab that's still open; if every window is closed, the next action opens a new one (same profile, so logins are kept; with `AUTO_START=0`, press **Start** instead). Either way the model is told what happened, so it reopens the page rather than reporting that it can't continue. An attached browser that was closed is reported as such.
 
 **How it works.** While Browser is on, every request includes the page open now as text, with clickable elements numbered (`[8:link Next]`) and tables shown with their first rows (`<<table 0: 240 rows x 6 cols>>`). Questions about what's on screen are answered directly. To get more, the model writes an action block, much as it writes SQL:
 
@@ -309,11 +311,16 @@ To use a browser you started yourself, start it with `--remote-debugging-port`, 
 - Actions that **change** the page (`navigate`, `click`, `type`, `select`, `press`, `back`, `paginate`, `click_all`) show **Allow** first. **Settings → Auto-click** runs them without asking (default from `AUTO_CLICK`).
 - The result goes back to the model, which takes the next step or answers. Steps pause after 15 in a row (`BROWSER_MAX_STEPS`, `0` = never) so you can check in; pressing **Allow** or **Run** on the waiting step lets it carry on for another 15. **Stop** (or Esc) also stops a running `paginate`/`click_all` at the next page.
 - `paginate` extracts a table from every page by clicking the next control until the last page, and `click_all` clicks every "Show more" or expand control. Each is a single step for the model, however many clicks it takes.
-- With `VISION=1` (a model that accepts images) there is also `screenshot`, attached to the chat as an image.
+- **Visual mode** (Browser menu, for a model that accepts images; default from `VISION`): after every step the model gets a screenshot with a numbered box on each clickable element in view. The numbers are the same ids as in the page text, and the result also lists them as `[id:kind label] at (x, y)`, so the model clicks what it sees rather than guessing from the HTML. It adds:
+  - `{"action": "click_at", "x": 420, "y": 310}` clicks a point of the latest screenshot (pixels from its top-left; the image is scaled to the page's CSS pixels). For a chart, canvas, map or icon with no id. Needs **Allow** like `click`.
+  - `{"action": "screenshot"}` looks again (`"marks": false` for a clean picture).
+  - `{"action": "save_table", "save_as": "readings", "columns": [...], "rows": [[...]]}` saves values the model read from the screen (a chart, a dashboard of tiles, a picture of a table) as a CSV attached to the chat, so it becomes an SQL table. These are the model's reading, not extracted data: the result says so. Real HTML tables still go through `extract_table`/`paginate`, which are exact.
+  - Only the last `SCREENSHOTS_KEPT` (3) screenshots are sent with each request; older ones are left out to save tokens.
+- Elements that are clickable only by their pointer cursor (the click handlers of React/Vue/Angular apps on plain `div`s and `span`s: tiles, list rows, cards) are listed as `[12:clickable …]` and can be clicked by id, in text mode too. `POINTER_CLICKABLES=0` turns this off.
 
 **Tables become SQL tables.** `extract_table` and `paginate` save all rows as a CSV file attached to the chat (`lots.csv` above). It is loaded like any attached CSV: the model can query it with SQL as table `lots` (source `files`), filter, total and join it with other attached files, and you can see it in **Tables**, download it, or remove it. Numbers written with thousands separators (`1,234`) are saved as plain numbers.
 
-**What the model sees** in the Browser menu shows exactly the page text the model gets. Check it if an answer seems to miss something. Data drawn on a canvas (some charts) isn't text; use `VISION=1` and a screenshot.
+**What the model sees** in the Browser menu shows exactly the page text the model gets. Check it if an answer seems to miss something. Data drawn on a canvas (some charts) isn't text; turn on **Visual mode** (with a vision model) so the model can read it from a screenshot and `save_table` it.
 
 **Safety.** The model is told not to press buttons that change things (save, submit, delete, acknowledge, start/stop) unless you ask for exactly that, and Allow is your check. Keep Auto-click off on pages where a wrong click matters. Web pages can contain text aimed at the model, so set `ALLOWED_DOMAINS` to the servers it may open. The browser runs as the account running Datasquint, signed in as you: keep `HOST=127.0.0.1` unless everyone on the network may use that session.
 
@@ -506,7 +513,11 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `IGNORE_CERT_ERRORS` | `0` | `1` accepts self-signed certificates |
 | `AUTO_CLICK` | `0` | Default for **Settings → Auto-click** |
 | `BROWSER_MAX_STEPS` | `15` | Browser steps run automatically in a row before pausing; one press of **Allow**/**Run** gives another run of this many. `0` never pauses. |
-| `VISION` | `0` | `1` offers the `screenshot` action (the model must accept images) |
+| `VISION` | `0` | Default for **Visual mode** in the Browser menu (`1` = on); the model must accept images. Each person's menu choice overrides it. |
+| `SCREENSHOTS_KEPT` | `3` | Browser screenshots sent with each request in Visual mode; older ones are left out to save tokens |
+| `SCREENSHOT_MAX_MARKS` | `200` | Most numbered boxes drawn on one screenshot |
+| `POINTER_CLICKABLES` | `1` | List elements that are clickable only by their pointer cursor (`div` tiles, rows) as `[id:clickable …]`; `0` = off |
+| `SAVE_TABLE_MAX_ROWS` | `2000` | Most rows in one `save_table` (values the model read from the screen) |
 | `BROWSER_SNAPSHOT_CHARS` | `8000` | Page text sent per request; longer pages are read in parts |
 | `BROWSER_RESULT_ROWS` | `30` | Rows of an extracted table shown to the model (the CSV has all) |
 | `TABLE_MAX_ROWS` / `TABLE_SAMPLE_ROWS` | `5000` / `5` | Rows extracted per table / shown per table in the page text |
@@ -585,7 +596,7 @@ First look in the [error log](#error-log) for lines from the time it happened; t
 | *… only supports … version N* | The browser updated: get the matching driver. |
 | *Another … window is using its profile folder* (also *Chrome instance exited*) | A window from an earlier run still has the profile open, often after Datasquint was stopped with the browser open. Close that browser window (check Task Manager), or set another `PROFILE_DIR` / `CHROME_PROFILE_DIR`. |
 | *Chrome is already open. Close it first to use Edge.* | Only one browser at a time: **Close** it in the Browser menu, then pick the other. |
-| The model misses data that's on the page | Check **What the model sees**. The data may be in a frame (the model can use `frame`), drawn on a canvas (use `VISION=1`), or still loading (raise `SETTLE_MAX_MS`). |
+| The model misses data that's on the page | Check **What the model sees**. The data may be in a frame (the model can use `frame`), drawn on a canvas (use **Visual mode**), or still loading (raise `SETTLE_MAX_MS`). |
 | Formatting shows as plain text | The markdown library couldn't load from cdnjs (offline). SQL blocks, Run and auto-run still work. |
 
 ## Project layout
@@ -639,7 +650,7 @@ All responses are JSON unless noted.
 
 - `GET /api/browser/status` — `{available, enabled, running, mode, browser, browser_name, url, title, tabs, frame, vision, attach, headless, start_url, default_browser, browsers: [{id, name, attach}]}`, or `{available: false, error}` without selenium
 - `POST /api/browser/start` — `{url?, headless?, browser?}` (`edge`/`chrome`; refused while the other is open); `POST /api/browser/close`; `POST /api/browser/navigate` — `{url, browser?}` (starts that browser if none is open). Each returns the status, or `{error}` with 400
-- `POST /api/browser/action` — `{action: "<the action block's JSON>", files: [chat attachment ids], browser?}` → `{action, title, text, attachments: [upload JSON], url}` or `{title, error, text}`; `text` is what the model receives. Tables are stored as uploads (CSV, loaded as SQL tables), screenshots as image uploads
+- `POST /api/browser/action` — `{action: "<the action block's JSON>", files: [chat attachment ids], browser?, visual?}` → `{action, title, text, attachments: [upload JSON], url}` or `{title, error, text}`; `text` is what the model receives. Tables are stored as uploads (CSV, loaded as SQL tables), screenshots as image uploads
 - `POST /api/browser/cancel` — stops a running `paginate` / `click_all` / `wait` at the next page or click
 - `GET /api/browser/screenshot` — `{image}` (PNG, base64); `GET /api/browser/page[?part=]` — `{text, chars}`, the page text the model gets
 

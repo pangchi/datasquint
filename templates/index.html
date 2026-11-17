@@ -1254,7 +1254,7 @@ async function send(text, atts, c = cur()){
         model: $("#model").value,
         temperature: state.settings.temperature,
         dbs: chatDbs(c),
-        browser: !!(c.browser && brCfg.available),
+        browser: !!(c.browser && brCfg.available), visual: !!(c.browser && brCfg.available && brVisual()),
         system: state.settings.system,
         messages: c.messages.slice(0, -1).filter(m => !m.error).map(({role, content, attachments, removed}) => ({role, attachments,
           content: removed?.length ? `${content}\n\n[The user removed ${removed.length > 1 ? "these attachments" : "this attachment"} from the chat; it is no longer available: ${removed.join(", ")}]`.trim() : content }))
@@ -1413,7 +1413,7 @@ async function runActions(acts, c = cur(), manual = false){
   for (const action of acts) {
     try {
       const r = await fetch("/api/browser/action", { method: "POST", headers: { "Content-Type": "application/json" }, signal: job.ctrl.signal,
-        body: JSON.stringify({ action, files: chatFileIds(c), browser: brPick() }) }).then(r => r.json());
+        body: JSON.stringify({ action, files: chatFileIds(c), browser: brPick(), visual: brVisual() }) }).then(r => r.json());
       results.push(r); atts.push(...(r.attachments || []));
     } catch (e) {
       if (e.name === "AbortError") break;
@@ -1448,6 +1448,8 @@ async function refreshBrowser(){
 /* Edge or Chrome: the one open, else the one picked in the menu (remembered), else BROWSER in .env */
 function brPick(){ const ids = (brStatus.browsers || []).map(b => b.id), saved = localStorage.getItem("ds.browserKind");
   return brStatus.running ? brStatus.browser : ids.includes(saved) ? saved : (brStatus.default_browser || "edge"); }
+// Visual mode: the model gets a screenshot with numbered boxes after each step (needs a model that reads images).
+function brVisual(){ const v = localStorage.getItem("ds.visual"); return v === null ? !!brCfg.vision : v === "1"; }
 function brName(id = brPick()){ return (brStatus.browsers || []).find(b => b.id === id)?.name || (id === "chrome" ? "Chrome" : "Edge"); }
 function updateBrToggle(){
   const t = $("#brToggle"), c = cur(), on = !!(c?.browser && brCfg.available);
@@ -1472,10 +1474,16 @@ function renderBrMenu(){
       `<select id="brKind" title="Which browser to start">${(st.browsers || [{ id: "edge", name: "Edge" }]).map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join("")}</select>` +
       `<button class="primary" id="brStart">${(st.browsers || []).find(b => b.id === brPick())?.attach ? "Attach to " : "Start "}${esc(brName())}</button>`}
       <button id="brShot"${st.running ? "" : " disabled"}>Screenshot</button><button id="brSee"${st.running ? "" : " disabled"} title="The page text the model gets">What the model sees</button></div>
+    <label class="sw" title="For AI models that read images. Each step sends a screenshot with numbered boxes on everything clickable, so the model clicks what it sees and can read charts or tiles into a table. Uses more tokens."><input type="checkbox" id="brVisual"> Visual mode <small style="opacity:.75">(vision model)</small></label>
+    <div class="note" id="brVisualNote"${brVisual() ? "" : " hidden"}>The model sees a numbered screenshot after each step and can click by number or position, and copy charts or tiles into a table. The last ${brCfg.screenshots_kept ?? 3} screenshots are sent with each request.</div>
     <div id="brOut"></div>
     <div class="note">Log in to your sites in the browser window yourself — the model never types passwords. Logins are kept in the app's own profile for each browser (PROFILE_DIR for Edge, CHROME_PROFILE_DIR for Chrome).</div>`;
   if ($("#brKind")) { $("#brKind").value = brPick();
     $("#brKind").onchange = () => { localStorage.setItem("ds.browserKind", $("#brKind").value); renderBrMenu(); updateBrToggle(); }; }
+  const vis = $("#brVisual"); vis.checked = brVisual();
+  vis.onchange = () => { localStorage.setItem("ds.visual", vis.checked ? "1" : "0"); $("#brVisualNote").hidden = !vis.checked;
+    notify(vis.checked ? "Visual mode on: the model gets a numbered screenshot after each browser step. It needs a model that reads images."
+                       : "Visual mode off: the model reads the page as text."); };
   const on = $("#brOn"); on.checked = !!c?.browser;
   on.onchange = () => {
     let x = cur(); if (!x) { newChat(); x = cur(); }
