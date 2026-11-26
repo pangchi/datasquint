@@ -449,6 +449,14 @@ dialog textarea{min-height:110px;resize:vertical}
   #sideResize{display:none}
   #messages{padding:16px 14px 30px}.composer{padding:8px 10px 12px}
 }
+.brtabs{display:flex;flex-direction:column;gap:3px;margin:6px 0}
+.brtabs .lbl{font-size:12px;font-weight:600;color:var(--muted)}
+.brtabs button.tab{display:flex;align-items:center;gap:6px;text-align:left;width:100%;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:none;color:inherit;font:inherit;font-size:13px;cursor:pointer}
+.brtabs button.tab:hover{border-color:var(--accent)}
+.brtabs button.tab.cur{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);cursor:default}
+.brtabs .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brtabs .badge{font-size:11px;padding:1px 6px;border-radius:9px;background:var(--accent);color:var(--accent-ink);white-space:nowrap}
+.brtabs .badge.dim{background:var(--line);color:var(--ink)}
 #brStepsBox{margin:6px 0;font-size:13px}
 #brStepsBox summary{cursor:pointer;font-weight:600;padding:4px 0}
 ol.steps{margin:4px 0;padding-left:0;list-style:none;max-height:180px;overflow:auto;font-size:12px}
@@ -1261,7 +1269,7 @@ async function send(text, atts, c = cur()){
         dbs: chatDbs(c),
         browser: !!(c.browser && brCfg.available), visual: !!(c.browser && brCfg.available && brVisual()), manual: brTrack(),
         system: state.settings.system,
-        messages: c.messages.slice(0, -1).filter(m => !m.error).map(({role, content, attachments, removed}) => ({role, attachments,
+        messages: c.messages.slice(0, -1).filter(m => !m.error).map(({role, kind, content, attachments, removed}) => ({role, kind, attachments,
           content: removed?.length ? `${content}\n\n[The user removed ${removed.length > 1 ? "these attachments" : "this attachment"} from the chat; it is no longer available: ${removed.join(", ")}]`.trim() : content }))
       })
     });
@@ -1280,6 +1288,7 @@ async function send(text, atts, c = cur()){
         if (ev.delta) { reply.content += ev.delta; job.status = ""; }
         if (ev.status) job.status = ev.status;
         if (ev.parts) reply.parts = ev.parts;
+        if (ev.notice) notify(ev.notice);
         if (ev.usage) reply.usage = ev.usage;
         if (ev.error) { reply.content += (reply.content ? "\n\n" : "") + "**Request failed.** " + ev.error; reply.error = true;
           if (ev.ai_down || ev.ai_auth) checkAI(true); }
@@ -1457,6 +1466,27 @@ function brPick(){ const ids = (brStatus.browsers || []).map(b => b.id), saved =
 function brVisual(){ const v = localStorage.getItem("ds.visual"); return v === null ? !!brCfg.vision : v === "1"; }
 // Tell the model what the user clicked and typed in the browser window by hand.
 function brTrack(){ return localStorage.getItem("ds.trackClicks") !== "0"; }
+// Open tabs, with the one the AI works in marked; click another to switch the AI (and the window) to it.
+let tabsCache = [];
+async function loadTabs(){
+  const box = $("#brTabs"); if (!box) return;
+  if (tabsCache.length) drawTabs(box);
+  let r; try { r = await api("/api/browser/tabs"); } catch (e) { return; }
+  tabsCache = r.tabs || []; drawTabs(box);
+}
+function drawTabs(box){
+  box.innerHTML = `<div class="lbl">Tabs</div>` + tabsCache.map(t => `<button type="button" class="tab${t.current ? " cur" : ""}" data-i="${t.index}" title="${escAttr(t.url)}${t.current ? "" : " — click to make the AI work in this tab"}">
+      <span class="t">${esc(t.title || t.url || "(no title)")}</span>${t.current ? `<span class="badge">AI works here</span>` : t.shown ? `<span class="badge dim">on screen</span>` : ""}</button>`).join("");
+  box.querySelectorAll("button.tab:not(.cur)").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const r = await api("/api/browser/tab", { method: "POST", body: JSON.stringify({ index: +b.dataset.i }) });
+      if (r.error) { notify(r.error); b.disabled = false; return; }
+      tabsCache = r.tab_list || []; brStatus = { ...brStatus, ...r }; updateBrToggle(); renderBrMenu();
+      notify(`The AI now works in: ${r.title || "that tab"}`);
+    } catch (e) { b.disabled = false; }
+  });
+}
 async function loadSteps(){
   const box = $("#brSteps"); if (!box) return;
   let r; try { r = await api("/api/browser/manual?limit=12"); } catch (e) { return; }
@@ -1474,7 +1504,7 @@ function updateBrToggle(){
   $("#brLabel").textContent = !on ? "Browser off" : brStatus.running ? brName() : "Browser (closed)";
   t.title = !brCfg.available ? (brCfg.error || "Browser support isn't installed on the server")
     : !on ? "Let the model read and use the browser (Edge or Chrome) in this chat"
-    : brStatus.running ? `${brName()} · model sees: ${brStatus.title || ""} — ${brStatus.url || ""}` : `On for this chat. ${brName()} isn't open yet.`;
+    : brStatus.running ? `${brName()}${brStatus.tabs > 1 ? ` (tab ${brStatus.tab + 1} of ${brStatus.tabs})` : ""} · model sees: ${brStatus.title || ""} — ${brStatus.url || ""}` : `On for this chat. ${brName()} isn't open yet.`;
 }
 function renderBrMenu(){
   const m = $("#brMenu"), c = cur();
@@ -1484,7 +1514,8 @@ function renderBrMenu(){
   }
   const st = brStatus;
   m.innerHTML = `<label class="sw"><input type="checkbox" id="brOn"> Use the browser in this chat</label>
-    <div class="st">${st.running ? `${esc(brName())}: <b>${esc(st.title || "")}</b><br>${esc(st.url || "")}` : "No browser open."}${st.error ? `<br>${esc(st.error)}` : ""}</div>
+    <div class="st">${st.running ? `${esc(brName())}${st.tabs > 1 ? ` · tab ${st.tab + 1} of ${st.tabs}` : ""}: <b>${esc(st.title || "")}</b><br>${esc(st.url || "")}` : "No browser open."}${st.error ? `<br>${esc(st.error)}` : ""}</div>
+    ${st.running && st.tabs > 1 ? `<div id="brTabs" class="brtabs"></div>` : ""}
     <div class="row2"><input type="text" id="brUrl" placeholder="http://server/page" value="${escAttr(st.running && !/^(about|data|edge|chrome):/.test(st.url || "") ? st.url : (st.start_url || ""))}"><button id="brGo">Go</button></div>
     <div class="row2">${st.running ? `<button id="brClose">Close ${esc(brName())}</button>` :
       `<select id="brKind" title="Which browser to start">${(st.browsers || [{ id: "edge", name: "Edge" }]).map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join("")}</select>` +
@@ -1501,6 +1532,7 @@ function renderBrMenu(){
     <div class="note">Log in to your sites in the browser window yourself — the model never types passwords. Logins are kept in the app's own profile for each browser (PROFILE_DIR for Edge, CHROME_PROFILE_DIR for Chrome).</div>`;
   if ($("#brKind")) { $("#brKind").value = brPick();
     $("#brKind").onchange = () => { localStorage.setItem("ds.browserKind", $("#brKind").value); renderBrMenu(); updateBrToggle(); }; }
+  if ($("#brTabs")) loadTabs();
   const tr = $("#brTrack"); tr.checked = brTrack();
   tr.onchange = () => { localStorage.setItem("ds.trackClicks", tr.checked ? "1" : "0");
     notify(tr.checked ? "The AI will be told what you click and type in the browser window." : "The AI won't be told what you click in the browser window."); };

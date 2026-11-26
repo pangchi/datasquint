@@ -1,6 +1,6 @@
 # Datasquint
 
-**Version 2.25.0** · [Changelog](CHANGELOG.md)
+**Version 2.27.0** · [Changelog](CHANGELOG.md)
 
 Ask questions about your PostgreSQL databases and your CSV and Excel files in plain language. Datasquint is a ChatGPT-style web app (Flask) that works with any OpenAI-compatible model: the model writes read-only SQL, the app runs it, and the model answers from the results. It can also read files you attach, from single documents to zipped projects.
 
@@ -311,6 +311,22 @@ To use a browser you started yourself, start it with `--remote-debugging-port`, 
 - Actions that **change** the page (`navigate`, `click`, `type`, `select`, `press`, `back`, `paginate`, `click_all`) show **Allow** first. **Settings → Auto-click** runs them without asking (default from `AUTO_CLICK`).
 - The result goes back to the model, which takes the next step or answers. Steps pause after 15 in a row (`BROWSER_MAX_STEPS`, `0` = never) so you can check in; pressing **Allow** or **Run** on the waiting step lets it carry on for another 15. **Stop** (or Esc) also stops a running `paginate`/`click_all` at the next page.
 - `paginate` extracts a table from every page by clicking the next control until the last page, and `click_all` clicks every "Show more" or expand control. Each is a single step for the model, however many clicks it takes.
+- **Lazy loading.** Tables that only load rows as you scroll are read in full by `extract_table`:
+  - *Infinite scroll* (more rows appear at the bottom of the page or list): it scrolls to the end, waiting for each batch, until nothing more comes.
+  - *Virtual grids* (ag-Grid, MUI DataGrid and the like keep only the rows in view and reuse them while scrolling): it scrolls the grid's own scrollbar from the top and collects rows as they pass, by row number (`aria-rowindex`, `row-index`), joining rows split over pinned columns, then sorts them.
+  - It decides by itself (`"scroll": "auto"`): a table in its own scrolling box, a grid reporting more rows than shown, or a page that keeps going just below the table. `"scroll": true` forces it, `false` takes only the rows loaded now. The result says how many scrolls it took and why it stopped (end of the list, `TABLE_MAX_ROWS`, `LAZY_MAX_SCROLLS`, or **Stop**). Without a row number, identical rows count once.
+  - *"Load more" buttons*: `paginate` with `"next": "Load more"` keeps only the new rows each click.
+  - `{"action": "scroll", "table": 0, "direction": "down"}` scrolls a table's own scrollbar; `{"id": N, "inside": true, ...}` the list around element N.
+  - The model is told that a list showing "Loading…" or a spinner may still be filling, to wait or scroll before concluding something isn't there.
+  - `{"action": "scroll", "direction": "end"}` keeps scrolling (the page, a table's box, or the list around element N with `"inside": true`) until nothing more loads, for lists of cards that aren't tables; then read them with `snapshot` or `extract_text`.
+- **SAP Ariba, SuccessFactors and Fiori pages** get extra handling:
+  - **Layout tables** (Ariba builds pages from nested tables) aren't listed as tables; the data tables inside them are, so table numbers point at real data.
+  - **A header in its own table** (Ariba's line-item grids, fixed-header grids) is joined to the data table below it.
+  - **Separate scrollbars** (SAP UI5 `sap.ui.table`, where the rows are moved by a thin scrollbar beside them) are found and scrolled; rows split over fixed columns are joined by row number.
+  - **"More [20/45]" / "Show more" controls** under a table (UI5 growing lists) are pressed by `extract_table` until everything is loaded.
+  - **Busy indicators** (UI5 busy overlays, Ariba's *Please wait* panel, `aria-busy`, spinners) are waited out after each step, up to `SETTLE_MAX_MS`; one that stays still for `BUSY_MAX_MS` (6 s) is treated as decoration.
+  - **Shadow DOM** (UI5 Web Components in newer SuccessFactors screens): tiles, buttons and tables inside components are listed, clickable and extractable.
+  - Typical flow: the model reads the page, clicks the tile (e.g. *My Requisitions*), opens the requisition, then `extract_table` collects every line item, scrolling and pressing *More* as needed.
 - **Visual mode** (Browser menu, for a model that accepts images; default from `VISION`): after every step the model gets a screenshot with a numbered box on each clickable element in view. The numbers are the same ids as in the page text, and the result also lists them as `[id:kind label] at (x, y)`, so the model clicks what it sees rather than guessing from the HTML. It adds:
   - `{"action": "click_at", "x": 420, "y": 310}` clicks a point of the latest screenshot (pixels from its top-left; the image is scaled to the page's CSS pixels). For a chart, canvas, map or icon with no id. Needs **Allow** like `click`.
   - `{"action": "screenshot"}` looks again (`"marks": false` for a clean picture).
@@ -376,6 +392,8 @@ Uploads are kept on the server in `uploads/<id>/` (the original file, plus `tabl
 Deleting is permanent. There's no recycle bin.
 
 ## Large requests
+
+**Long browsing and query sessions** stay within the model's context: only the last `TOOL_RESULTS_KEPT` (4) browser/query results are sent in full; older ones are cut to their first lines, without their table previews or screenshots (the extracted tables stay available as SQL tables). Table rows shown to the model per result are capped at `BROWSER_RESULT_CHARS`, long cells cut at 200 characters. If the conversation still exceeds `MAX_SEND_CHARS`, the oldest messages are left out (the model is told); splitting into parts is kept for when the latest message itself carries large files. If the model still answers *context length exceeded*, Datasquint retries once at half the size and shows a notice.
 
 No single request to the model is larger than `MAX_SEND_CHARS` (default 100,000 characters, counting the system prompt, history, message and file text; images don't count). When a message would be bigger:
 
@@ -483,7 +501,9 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `ALLOWED_EXTENSIONS` | built-in list | Comma list that replaces the allowed types, e.g. `.png,.pdf,.csv` |
 | `ZIP_MAX_FILES` / `ZIP_MAX_TOTAL_MB` / `ZIP_MAX_IMAGES` | `300` / `100` / `10` | Zip limits |
 | `FILES_SQL_MEMORY` | `1GB` | Memory limit for SQL over attached CSV/Excel files; 2–4 GB for heavy joins or distinct counts on files over 1 GB |
-| `MAX_SEND_CHARS` | `100000` | Largest single request to the model |
+| `MAX_SEND_CHARS` | `100000` | Largest single request to the model. Set it to about 3 × the model's context in tokens |
+| `TOOL_RESULTS_KEPT` | `4` | Browser and query results sent in full; older ones are shortened and their table previews left out |
+| `BROWSER_RESULT_CHARS` | `6000` | Most characters of extracted table rows shown to the model per result (the file has them all) |
 | `PART_NOTE_TOKENS` | `2000` | Length of each part's notes when splitting |
 | `UPLOAD_DIR` | `./uploads` | Where uploads are stored |
 
@@ -531,6 +551,9 @@ Settings go in `.env` (see `env.example`). Restart `python app.py` after changin
 | `BROWSER_RESULT_ROWS` | `30` | Rows of an extracted table shown to the model (the CSV has all) |
 | `TABLE_MAX_ROWS` / `TABLE_SAMPLE_ROWS` | `5000` / `5` | Rows extracted per table / shown per table in the page text |
 | `PAGINATE_MAX_PAGES` | `200` | Most pages one `paginate` reads |
+| `LAZY_TABLES` | `auto` | `extract_table` scrolls through tables that load as you scroll; `off` = only when the model asks (`"scroll": true`) |
+| `LAZY_MAX_SCROLLS` | `200` | Most scrolls for one table (or one `scroll` to the `end`) |
+| `BUSY_MAX_MS` | `6000` | A busy indicator / spinner on a page that hasn't changed for this long is ignored (decoration, not loading) |
 | `SETTLE_QUIET_MS` / `SETTLE_MAX_MS` | `600` / `8000` | A page counts as loaded after this long without changes, or this long at most |
 | `PAGE_LOAD_TIMEOUT` | `60` | Seconds to wait for a page to open |
 | `WINDOW_SIZE` / `BROWSER_ARGS` / `DRIVER_ARGS` | `1400,950` / none / none | Window size and extra Edge / msedgedriver switches |
@@ -576,7 +599,7 @@ First look in the [error log](#error-log) for lines from the time it happened; t
 | Red notice *The AI server can't be reached* | Datasquint can't connect to `OPENAI_BASE_URL`: the reason is in brackets (*Connection refused*: the server isn't running or listens on another port; *Name or service not known*: wrong host name; *no answer within 5 s*: firewall, VPN or wrong address). Start the AI server or fix `OPENAI_BASE_URL`, then press **Retry**. The notice is checked again every 15 s and disappears by itself when the server answers. |
 | Red notice *The AI server rejected the API key* | Fix `OPENAI_API_KEY` in `.env` and restart Datasquint. |
 | *CERTIFICATE_VERIFY_FAILED … unable to get local issuer certificate*, or *The HTTPS certificate of GitHub / the AI server isn't trusted* | A company network inspecting HTTPS, or an AI server with an internal certificate. See [Company networks and HTTPS certificates](#company-networks-and-https-certificates). |
-| *Request failed … context length* | The request is larger than the model accepts. Lower `MAX_SEND_CHARS`, or start a new chat. |
+| *Request failed … context length* / *token limit exceeded* | The request is larger than the model accepts. Datasquint already retries once without the oldest messages; set `MAX_SEND_CHARS` to about 3 × the model's context in tokens (e.g. `24000` for an 8k model) so requests fit the first time, or start a new chat. |
 | *SSH key file not found* | The path must exist on the machine running Datasquint, readable by the account it runs as. Use **Browse…** to pick it, or **Paste private key**. |
 | *Browsing is limited to …* | The key is outside `KEY_BROWSE_ROOT`. Type its path instead, or widen `KEY_BROWSE_ROOT`. |
 | *Connected to SSH, but the SSH server couldn't reach the database* | The database host/port are wrong as seen from the SSH server (often `localhost:5432`), or port forwarding is disabled. |
@@ -660,7 +683,7 @@ All responses are JSON unless noted.
 - `GET /api/browser/status` — `{available, enabled, running, mode, browser, browser_name, url, title, tabs, frame, vision, attach, headless, start_url, default_browser, browsers: [{id, name, attach}]}`, or `{available: false, error}` without selenium
 - `POST /api/browser/start` — `{url?, headless?, browser?}` (`edge`/`chrome`; refused while the other is open); `POST /api/browser/close`; `POST /api/browser/navigate` — `{url, browser?}` (starts that browser if none is open). Each returns the status, or `{error}` with 400
 - `POST /api/browser/action` — `{action: "<the action block's JSON>", files: [chat attachment ids], browser?, visual?}` → `{action, title, text, attachments: [upload JSON], url}` or `{title, error, text}`; `text` is what the model receives. Tables are stored as uploads (CSV, loaded as SQL tables), screenshots as image uploads
-- `POST /api/browser/cancel` — stops a running `paginate` / `click_all` / `wait` at the next page or click
+- `POST /api/browser/cancel` — stops a running `paginate` / `click_all` / `wait` / scrolled `extract_table` at the next page, click or scroll
 - `GET /api/browser/tabs` — `{tabs: [{index, title, url, current, shown}]}`; `POST /api/browser/tab` `{index}` — make that tab the AI's and bring it to the front
 - `GET /api/browser/manual[?limit=]` — `{tracking, steps: [{t, ev, text, url, title}]}`, the user's own steps in the window; `POST /api/browser/manual/clear`
 - `GET /api/browser/screenshot` — `{image}` (PNG, base64); `GET /api/browser/page[?part=]` — `{text, chars}`, the page text the model gets

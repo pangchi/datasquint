@@ -8,6 +8,43 @@ All notable changes to Datasquint (called pgPeek up to 1.4.0). Versions follow `
 
 The version is set in `version.py`. It's shown at the bottom of the sidebar and on the Help page, returned by `/api/version`, and recorded in chat exports.
 
+## 2.27.0 — 2026-11-24
+
+### Added
+- **SAP Ariba, SuccessFactors and Fiori pages.** Line items that only load as you scroll, or after *More*, were missing; tiles inside components couldn't be clicked.
+  - Layout tables (Ariba's nested page tables) are no longer listed as tables, so the data tables inside them are; single-row layout strips are skipped too.
+  - A header row kept in its own table just above the data (Ariba line items, fixed-header grids) is joined to the data.
+  - Virtual tables moved by a separate thin scrollbar (SAP UI5 `sap.ui.table`) are scrolled by that scrollbar; the box with the most to scroll is used.
+  - `extract_table` presses "More [20/45]" / "Show more" / "Load more" controls under a table until all rows are in (UI5 growing lists), and says how often.
+  - Busy indicators (UI5 busy overlays, Ariba's *Please wait*, `aria-busy`, spinners) are waited out after every step; `BUSY_MAX_MS` ignores a spinner on a still page.
+  - Shadow DOM (UI5 Web Components): tables, rows and cells inside components are found.
+  - `{"action": "scroll", "direction": "end"}` scrolls until nothing more loads, for lists of cards.
+  - The model is told the usual flow for these apps.
+
+### Fixed
+- On GitHub, `templates/index.html` was still the 2.24.0 page and the 2.25.0 page had been uploaded as `index (1).html` at the top level (Browser tabs list missing). It's back in `templates/`.
+
+## 2.26.1 — 2026-11-19
+
+### Fixed
+- **"Token limit exceeded" after lazy loading a large table** (or any long browsing or query session). Every step's result, with its table preview, stayed in the conversation, so it soon outgrew the model's context; past `MAX_SEND_CHARS` it was even split into parts, which doesn't suit a step-by-step session.
+  - Only the last `TOOL_RESULTS_KEPT` (4) browser and query results are sent in full. Older ones are shortened to their first lines, without table previews or screenshots; the extracted tables stay available as SQL tables.
+  - The rows shown to the model per extracted table are capped at `BROWSER_RESULT_CHARS` (6000 characters), long cells cut at 200; the CSV keeps everything.
+  - When the conversation is still too long, the oldest messages are left out (the model is told) instead of splitting into parts; splitting stays for large files in the latest message.
+  - If the model still reports its context exceeded, the request is retried once at half the size, with a notice suggesting the right `MAX_SEND_CHARS` (about 3 × the model's context in tokens).
+
+## 2.26.0 — 2026-11-19
+
+### Added
+- **Lazy-loading tables.** `extract_table` now gets every row of tables that load as you scroll: infinite-scroll lists (scrolls to the end, waiting for each batch) and virtual grids such as ag-Grid or MUI DataGrid (scrolls the grid's own scrollbar from the top and collects rows as they pass, by row number, joining pinned-column parts, sorted). Detected automatically (`"scroll": "auto"`; `true`/`false` to force), stoppable with **Stop**. `LAZY_TABLES`, `LAZY_MAX_SCROLLS`.
+- `scroll` with `"table": N` scrolls a table's own scrollbar; with `"id": N, "inside": true`, the list holding element N.
+
+### Fixed
+- `paginate` on a **"Load more"** button saved earlier rows again on every click; it now keeps only the new rows.
+
+### Changed
+- The model is told that lists showing "Loading…" may still be filling, and to wait or scroll before concluding something isn't there.
+
 ## 2.25.0 — 2026-11-17
 
 ### Added

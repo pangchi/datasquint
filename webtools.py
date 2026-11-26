@@ -54,6 +54,7 @@ OBS_TABLE_ROWS = _int("BROWSER_RESULT_ROWS", "30")           # rows of an extrac
 PAGINATE_MAX_PAGES = _int("PAGINATE_MAX_PAGES", "200")
 VISION = os.getenv("VISION", "0").strip() == "1"     # default for Visual mode (Browser menu), for vision models
 SAVE_TABLE_MAX_ROWS = _int("SAVE_TABLE_MAX_ROWS", "2000")
+LAZY_AUTO = os.getenv("LAZY_TABLES", "auto").strip().lower() != "off"   # scroll tables that load as you scroll
 
 # Actions that only read the page run without asking; the rest need Run (or Auto-click).
 READ_ACTIONS = {"snapshot", "extract_table", "extract_text", "find", "tabs", "frame", "switch_tab", "scroll", "wait",
@@ -207,14 +208,31 @@ def csv_name(save_as, idx):
     return base + ".csv"
 
 
+RESULT_CHARS = _int("BROWSER_RESULT_CHARS", "6000")     # most characters of table rows shown to the model per result
+CELL_CHARS = 200
+
+
+def _cell(v):
+    v = str(v).replace("\n", " ")
+    return v if len(v) <= CELL_CHARS else v[:CELL_CHARS - 1] + "…"
+
+
 def _rows_text(head, rows, limit):
+    """A preview of a table for the model: at most `limit` rows and RESULT_CHARS characters, long cells cut.
+    The full table is in the CSV file."""
     lines = []
     if head:
-        lines.append("| " + " | ".join(str(h) for h in head) + " |")
+        lines.append("| " + " | ".join(_cell(h) for h in head) + " |")
+    used, shown = len(lines[0]) if lines else 0, 0
     for r in rows[:limit]:
-        lines.append("| " + " | ".join(str(c) for c in r) + " |")
-    if len(rows) > limit:
-        lines.append(f"… {len(rows) - limit} more rows (all of them are in the file)")
+        line = "| " + " | ".join(_cell(c) for c in r) + " |"
+        if shown and used + len(line) > RESULT_CHARS:
+            break
+        lines.append(line[:RESULT_CHARS])
+        used += len(line)
+        shown += 1
+    if len(rows) > shown:
+        lines.append(f"… {len(rows) - shown:,} more rows (all {len(rows):,} are in the file; query it with SQL)")
     return "\n".join(lines)
 
 
@@ -281,17 +299,42 @@ def _execute(a):
         idx = int(a.get("table", 0) or 0)
         name = csv_name(a.get("save_as"), idx)
         if x == "extract_table":
-            data = browser.table(idx)
-            head, rows = data["head"], data["rows"]
-            note = f"Table {idx}: {len(rows)} rows" + (f" (page has {data['total']}; TABLE_MAX_ROWS limit)"
-                                                       if data["total"] > len(rows) else "")
+            mode = a.get("scroll", "auto")
+            lazy = mode is True or str(mode).lower() in ("true", "1", "yes")
+            if not lazy and str(mode).lower() == "auto" and LAZY_AUTO:
+                try:
+                    lazy = browser.lazy_info(idx)["lazy"]
+                except BrowserError:
+                    lazy = False
+            if lazy:
+                data = browser.table_scrolled(idx, a.get("max_scrolls"), should_stop=cancel_event.is_set)
+                head, rows = data["head"], data["rows"]
+                how = f"scrolling it {data['scrolls'] - data.get('more_clicks', 0)} times"
+                if data.get("more_clicks"):
+                    how += f" and pressing its More control {data['more_clicks']} times"
+                note = (f"Table {idx}: {len(rows)} rows, collected by {how} (it loads rows as you go); "
+                        f"stopped because {data['stopped']}")
+                if not data["keyed"]:
+                    note += ". Rows that are exactly the same were counted once"
+            else:
+                data = browser.table(idx)
+                head, rows = data["head"], data["rows"]
+                note = f"Table {idx}: {len(rows)} rows" + (f" (page has {data['total']}; TABLE_MAX_ROWS limit)"
+                                                           if data["total"] > len(rows) else "")
         else:
             pages, head, rows = [], [], []
+            last = []
 
             def on_page(n, data):
-                nonlocal head
+                nonlocal head, last
                 head = head or data["head"]
-                rows.extend(data["rows"])
+                cur = data["rows"]
+                # "Load more" buttons keep the earlier rows and add new ones below: take only the new ones
+                if last and len(cur) > len(last) and cur[:len(last)] == last:
+                    rows.extend(cur[len(last):])
+                else:
+                    rows.extend(cur)
+                last = cur
 
             res = browser.paginate(idx, a.get("next", "Next"),
                                    min(int(a.get("max_pages", 20) or 20), PAGINATE_MAX_PAGES),
@@ -350,7 +393,8 @@ def _execute(a):
     elif x == "press":
         out["text"] = browser.press(a.get("key", "Enter"))
     elif x == "scroll":
-        out["text"] = browser.scroll(a.get("direction", "down"), a.get("id"))
+        out["text"] = browser.scroll(a.get("direction", "down"), a.get("id"), inside=bool(a.get("inside")),
+                                     table=a.get("table"))
     elif x == "back":
         out["text"] = browser.back()
     elif x == "frame":
@@ -379,10 +423,10 @@ Actions:
 - {"action": "type", "id": 7, "text": "LOT-123", "enter": true}
 - {"action": "select", "id": 9, "option": "Last 7 days"}  (dropdowns)
 - {"action": "press", "key": "Enter"}  (Enter, Escape, Tab, Page_Down)
-- {"action": "scroll", "direction": "down"}  (down, up, top, bottom) or {"action": "scroll", "id": 30}
+- {"action": "scroll", "direction": "down"}  (down, up, top, bottom) or {"action": "scroll", "id": 30} to bring it into view; {"action": "scroll", "table": 0, "direction": "down"} scrolls table 0's own scrollbar (or {"id": 30, "inside": true} for the list holding element 30). "direction": "end" keeps scrolling until nothing more loads (lists that add items as you scroll), so all of it can then be read
 - {"action": "back"}
 - {"action": "find", "text": "Export"}  clickable elements whose text contains this
-- {"action": "extract_table", "table": 0, "save_as": "alarms"}  saves ALL rows of table 0 as alarms.csv, attached to this chat, which then becomes an SQL table you can query like other file tables
+- {"action": "extract_table", "table": 0, "save_as": "alarms"}  saves ALL rows of table 0 as alarms.csv, attached to this chat, which then becomes an SQL table you can query like other file tables. Tables that load more rows as you scroll (infinite scroll, grids with their own scrollbar) are scrolled through automatically; force it with "scroll": true, or "scroll": false to take only the rows loaded now
 - {"action": "paginate", "table": 0, "next": "Next", "max_pages": 20, "save_as": "alarms"}  extracts the table on every page by clicking the "next" control until the last page, into one CSV
 - {"action": "click_all", "text": "Show more", "max": 50}  clicks every control with that text (expand rows, load more)
 - {"action": "extract_text", "selector": "#summary"}  text of elements matching a CSS selector
@@ -393,7 +437,9 @@ How pages look: text in reading order; interactive elements appear as [12:button
 
 Rules:
 - If the user asks about what's displayed, answer from the current page; no action is needed.
-- Click, type, select or navigate when the user asks for more data or to go somewhere; you may take several steps. For a table spread over pages, use paginate rather than clicking next yourself.
+- Click, type, select or navigate when the user asks for more data or to go somewhere; you may take several steps. For a table spread over pages, use paginate rather than clicking next yourself; for one that loads as you scroll, extract_table (it scrolls); for a "Load more" / "Show more" button, paginate with "next": "Load more" (it keeps only the new rows each time).
+- A list that shows "Loading…", a spinner or only some of its items may still be loading: use wait or scroll, then read again, before saying something isn't there.
+- Business apps (SAP Ariba, SuccessFactors, Fiori and the like): open things by clicking their tile, card or link from the page text (or the numbered screenshot in Visual mode), then extract_table: it scrolls through line items that load as you scroll, presses "More [20/45]"-style controls, waits while the page shows its busy indicator, and finds a header row kept in a separate table. Lines that aren't a table (cards): {"action": "scroll", "direction": "end"} first, then read the page.
 - Never type passwords. If a login page appears, ask the user to log in in the BROWSER_NAME window and tell you when done.
 - Don't press buttons that change things (save, submit, delete, approve, acknowledge, start, stop, order) unless the user explicitly asked for exactly that.
 - Answer only from what the page and results show. Never invent values, rows or ids."""

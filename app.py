@@ -799,9 +799,60 @@ def screenshot_messages(raw):
     return set(idx[-SCREENSHOTS_KEPT:]) if SCREENSHOTS_KEPT else set()
 
 
-def build_content(msg, ftables=None, drop_screenshots=False):
+TOOL_RESULTS_KEPT = max(1, int(os.getenv("TOOL_RESULTS_KEPT", "4") or 4))
+OLD_RESULT_CHARS = 600
+
+
+def old_results(raw):
+    """Indexes of browser and query results (messages the app wrote for the model) that are older than the last
+    TOOL_RESULTS_KEPT. Those are sent shortened, without their table previews: a long browsing or scrolling
+    session would otherwise outgrow the model's context. Extracted tables stay available as SQL tables."""
+    idx = [i for i, m in enumerate(raw) if m.get("role") == "user" and m.get("kind") in ("web", "sql")]
+    return set(idx[:-TOOL_RESULTS_KEPT])
+
+
+def shorten_result(text):
+    text = text or ""
+    if len(text) <= OLD_RESULT_CHARS:
+        return text
+    return text[:OLD_RESULT_CHARS].rstrip() + f"\n… (older result shortened from {len(text):,} characters to save space)"
+
+
+def fit_history(messages, budget):
+    """Leave out the oldest turns (never the system prompt or the latest message) until the request fits."""
+    sys_msgs = [m for m in messages if m["role"] == "system"]
+    rest = [m for m in messages if m["role"] != "system"]
+    dropped = 0
+    while len(rest) > 1 and char_len(sys_msgs + rest) > budget:
+        rest.pop(0)
+        dropped += 1
+    while len(rest) > 1 and rest[0]["role"] == "assistant":   # start on a user turn
+        rest.pop(0)
+        dropped += 1
+    if dropped:
+        note = f"({dropped} earlier messages of this chat were left out to fit the model's context.)"
+        rest[0] = dict(rest[0], content=(note + "\n\n" + rest[0]["content"]) if isinstance(rest[0]["content"], str)
+                       else [{"type": "text", "text": note}] + rest[0]["content"])
+    return sys_msgs + rest, dropped
+
+
+def is_context_error(e):
+    t = str(e).lower()
+    return isinstance(e, openai.BadRequestError) and any(w in t for w in (
+        "context length", "context_length", "maximum context", "too many tokens", "token limit", "tokens exceed",
+        "exceeds the context", "prompt is too long", "input is too long", "reduce the length", "max_tokens"))
+
+
+def build_content(msg, ftables=None, drop_screenshots=False, old=False):
     """Turn a stored message plus attachment ids into OpenAI message content."""
     text = msg.get("content") or ""
+    if old:
+        text = shorten_result(text)
+        if msg.get("attachments"):
+            # its tables are listed in the system prompt; its screenshots are long out of date
+            keep = [a for a in msg["attachments"] if not _is_screenshot(a)
+                    and not (ftables and ftables.get(a.get("id") if isinstance(a, dict) else a))]
+            msg = dict(msg, attachments=keep)
     if msg.get("role") != "user" or not msg.get("attachments"):
         return text
     if drop_screenshots and any(_is_screenshot(a) for a in msg["attachments"]):
@@ -1626,18 +1677,41 @@ def chat():
         # read now, so the model sees the page as it is at this moment (after the last click)
         system = (system + "\n\n" + webtools.system_section(visual=bool(data.get("visual")), manual=data.get("manual", True) is not False)).strip()
 
-    keep = screenshot_messages(raw)
-    messages = [{"role": m.get("role", "user"), "content": build_content(m, ftables, i not in keep)}
+    keep, old = screenshot_messages(raw), old_results(raw)
+    messages = [{"role": m.get("role", "user"), "content": build_content(m, ftables, i not in keep, i in old)}
                 for i, m in enumerate(raw)]
     if system:
         messages = [{"role": "system", "content": system}] + messages
+    # Too big? When the bulk is earlier conversation (a long browsing or query session), leave out the oldest
+    # turns; split into parts only when the latest message itself carries large files.
+    dropped = 0
+    if char_len(messages) > MAX_SEND_CHARS and char_len(messages[-1:]) + len(system) < MAX_SEND_CHARS * 0.8:
+        messages, dropped = fit_history(messages, MAX_SEND_CHARS)
+        clog.info("Left out the %d oldest messages to keep the request under MAX_SEND_CHARS", dropped)
 
     def generate():
+        nonlocal messages
         t0, size = time.time(), char_len(messages)
         tally = usage.Tally()
         try:
             if size <= MAX_SEND_CHARS:
-                yield from stream_completion(model, messages, temperature, tally)
+                try:
+                    yield from stream_completion(model, messages, temperature, tally)
+                except openai.BadRequestError as e:
+                    # the model's context is smaller than MAX_SEND_CHARS: retry once at half the size
+                    if not is_context_error(e) or len(messages) < 3:
+                        raise
+                    clog.warning("%s: context too long at %s chars (%s); retrying with older messages left out",
+                                 model, f"{size:,}", str(e)[:200])
+                    messages, n = fit_history(messages, size // 2)
+                    if not n:
+                        raise
+                    yield ndjson({"status": f"Too long for the model: retrying without the {n} oldest messages…"})
+                    yield ndjson({"notice": f"The chat was too long for the model, so the {n} oldest messages were "
+                                            "left out of this request. Lower MAX_SEND_CHARS in .env to the model's "
+                                            "context (about 3 characters per token) to avoid the retry."})
+                    size = char_len(messages)
+                    yield from stream_completion(model, messages, temperature, tally)
             else:
                 yield from split_send(model, raw, system, temperature, tally, ftables)
             yield ndjson({"usage": tally.as_dict()})

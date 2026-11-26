@@ -119,18 +119,73 @@ function inlineText(node, withIds) {
   })(node);
   return clean(out);
 }
+// querySelectorAll that also looks inside shadow roots (UI5 Web Components, used by SuccessFactors, and other
+// custom elements keep their tables and buttons there)
+function deepAll(sel, root) {
+  root = root || document;
+  const out = Array.from(root.querySelectorAll(sel));
+  const hosts = [];
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  for (let n = w.currentNode; n; n = w.nextNode()) if (n.shadowRoot) hosts.push(n);
+  for (const h of hosts) out.push(...deepAll(sel, h.shadowRoot));
+  return out;
+}
+function hostContains(o, t) {        // contains, across shadow boundaries
+  for (let n = t; n; n = n.parentNode || n.host) if (n === o) return true;
+  return false;
+}
+// A <table> used for page layout (common in SAP Ariba, which builds its pages from nested tables): marked as
+// presentation, or holding other tables in its cells. Its data tables are listed instead of it.
+function layoutTable(t) {
+  if (t.tagName !== 'TABLE') return false;
+  const role = (t.getAttribute('role') || '').toLowerCase();
+  if (role === 'presentation' || role === 'none') return true;
+  if (t.querySelector('td table, th table')) return true;
+  // a single row with no header cells: a strip of page layout (title bar, toolbar), not data
+  const rows = Array.from(t.rows).filter(r => r.closest('table') === t);
+  return rows.length === 1 && !t.querySelector('th') && t.closest('td') !== null;
+}
+function headerOnly(t) {
+  const rows = tableRows(t);
+  return rows.length > 0 && rows.length <= 3 && rows.every(r => isHeaderRow(r) || (t.tHead && t.tHead.contains(r)));
+}
 function allTables() {
-  const list = Array.from(document.querySelectorAll(TABLES));
+  let list = deepAll(TABLES).filter(t => !layoutTable(t));
   // a <table> inside a role=grid (or the reverse) is the same table: keep the outermost
-  return list.filter(t => !list.some(o => o !== t && o.contains(t)));
+  list = list.filter(t => !list.some(o => o !== t && hostContains(o, t)));
+  // a header row in a table of its own, followed by the table with the data (SAP Ariba, fixed-header grids):
+  // that pair is one table, so the header-only one isn't listed (splitHead finds it again)
+  return list.filter((t, i) => !(headerOnly(t) && list.slice(i + 1).some(b => near(t, b))));
+}
+function near(a, b) {           // b follows a within a few levels of the same container
+  if (!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+  let p = a.parentElement;
+  for (let i = 0; p && i < 6; i++, p = p.parentElement) if (p.contains(b)) return true;
+  return false;
+}
+// The header of a table whose header row lives in a separate table just before it.
+function splitHead(t, width) {
+  let p = t.parentElement;
+  for (let i = 0; p && i < 6; i++, p = p.parentElement) {
+    const cands = Array.from(p.querySelectorAll('table,[role=row]')).filter(h => h !== t && !h.contains(t) && !t.contains(h) &&
+      (h.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING));
+    for (const h of cands.reverse()) {
+      const rows = h.tagName === 'TABLE' ? Array.from(h.rows) : [h];
+      const hr = rows.reverse().find(r => isHeaderRow(r));
+      if (!hr) continue;
+      const cells = rowCells(hr).flatMap(c => Array(c.colSpan || 1).fill(inlineText(c, false)));
+      if (!width || Math.abs(cells.length - width) <= 1) return cells.slice(0, Math.max(width, 1) || cells.length);
+    }
+  }
+  return [];
 }
 function tableRows(t) {
   if (t.tagName === 'TABLE') return Array.from(t.rows).filter(r => r.closest('table') === t);
-  return Array.from(t.querySelectorAll('[role=row]'));
+  return deepAll('[role=row]', t);
 }
 function rowCells(r) {
   if (r.tagName === 'TR') return Array.from(r.cells);
-  return Array.from(r.querySelectorAll('[role=cell],[role=gridcell],[role=columnheader],[role=rowheader]'));
+  return deepAll('[role=cell],[role=gridcell],[role=columnheader],[role=rowheader]', r);
 }
 function isHeaderRow(r) {
   const cells = rowCells(r);
@@ -149,6 +204,9 @@ function readTable(t, withIds, maxRows) {
     rows = rows.slice(1);
   }
   const total = rows.length;
+  if (!head.length && rows.length) {
+    head = splitHead(t, Math.max(...rows.slice(0, 5).map(r => rowCells(r).length)));
+  }
   const body = rows.slice(0, maxRows).map(r => {
     const cells = rowCells(r).flatMap(c => {
       const v = inlineText(c, withIds);
@@ -318,6 +376,97 @@ if (idx < 0 || idx >= tables.length) return {error: 'no table ' + idx + ' (page 
 return readTable(tables[idx], withIds, maxRows);
 """
 
+# Lazily loaded tables: infinite scroll (rows added as you scroll) and virtual grids (only the rows in view exist,
+# recycled as you scroll, e.g. ag-Grid, MUI DataGrid). op: info | top | read | step.
+_JS_LAZY = _JS_HELPERS + r"""
+const idx = arguments[0], op = arguments[1];
+const tables = allTables();
+if (idx < 0 || idx >= tables.length) return {error: 'no table ' + idx + ' (page has ' + tables.length + ')'};
+const t = tables[idx];
+const page = document.scrollingElement || document.documentElement;
+function scrollsY(n) {
+  if (n.scrollHeight <= n.clientHeight + 4) return false;
+  const s = getComputedStyle(n);
+  return /(auto|scroll|overlay)/.test(s.overflowY);
+}
+function scroller() {
+  // The scrolling box that moves the rows: inside the grid (virtual grids keep their rows in one), a separate
+  // scrollbar next to it (SAP UI5 tables), then around it, then the page. The one with the most to scroll wins.
+  const r = t.getBoundingClientRect();
+  const cands = Array.from(t.querySelectorAll('div,section,tbody')).slice(0, 4000).filter(scrollsY);
+  let p = t.parentElement;
+  for (let i = 0; p && i < 3; i++, p = p.parentElement) {
+    for (const n of Array.from(p.querySelectorAll('div')).slice(0, 2000)) {
+      if (n.contains(t) || t.contains(n) || !scrollsY(n)) continue;
+      const b = n.getBoundingClientRect();     // a scrollbar of its own, beside the rows
+      if (b.bottom > r.top && b.top < r.bottom && b.width < 40) cands.push(n);
+    }
+  }
+  if (cands.length) return cands.sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight))[0];
+  for (let n = t; n && n !== document.body && n !== document.documentElement; n = n.parentElement) if (scrollsY(n)) return n;
+  return page;
+}
+// "More [20/45]" (SAP UI5 growing lists), "Show more", "Load more" just under the table
+const MORE = /^\s*(more|show more|load more|view more|see more|show all|more items|load more items)\b|\[\s*\d+\s*\/\s*\d+\s*\]/i;
+function moreTrigger() {
+  const cands = Array.from(t.querySelectorAll('.sapMGrowingListTrigger,[id$="-trigger"],button,a,[role=button]'));
+  let p = t.parentElement;
+  for (let i = 0; p && i < 3; i++, p = p.parentElement)
+    for (const n of p.querySelectorAll('.sapMGrowingListTrigger,[id$="-trigger"],button,a,[role=button]'))
+      if (!t.contains(n) && (t.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING)) cands.push(n);
+  return cands.find(n => visible(n) && !disabled(n) && MORE.test(clean(n.innerText || n.getAttribute('aria-label') || '')));
+}
+const box = scroller(), isPage = box === page;
+const view = isPage ? innerHeight : box.clientHeight;
+const pos = () => ({top: Math.round(isPage ? scrollY : box.scrollTop), height: box.scrollHeight, view: view,
+                    atEnd: (isPage ? scrollY : box.scrollTop) + view >= box.scrollHeight - 4, inner: !isPage});
+if (op === 'info') {
+  const rows = tableRows(t).filter(visible), last = rows[rows.length - 1];
+  const below = last ? (isPage ? page.scrollHeight - (last.getBoundingClientRect().bottom + scrollY) : 0) : 0;
+  const keyed = rows.some(r => r.hasAttribute('aria-rowindex') || r.hasAttribute('row-index') || r.hasAttribute('data-row-index'));
+  const more = moreTrigger(), m = more && /\[\s*(\d+)\s*\/\s*(\d+)\s*\]/.exec(more.innerText || '');
+  return Object.assign(pos(), {below: Math.round(below), keyed: keyed, rows: rows.length, more: !!more,
+    // virtual grids say how many rows there are in all; UI5 growing lists show "More [20/45]"
+    count: +(t.getAttribute('aria-rowcount') || 0) || (m ? +m[2] : 0)});
+}
+if (op === 'more') {
+  const more = moreTrigger();
+  if (!more) return {clicked: false};
+  more.scrollIntoView({block: 'center'}); more.click();
+  return {clicked: true, text: cut(more.innerText || '', 40)};
+}
+if (op === 'top') { if (isPage) scrollTo(0, 0); else box.scrollTop = 0; return pos(); }
+if (op === 'bottom') { if (isPage) scrollTo(0, page.scrollHeight); else box.scrollTop = box.scrollHeight; return pos(); }
+if (op === 'up') { if (isPage) scrollBy(0, -innerHeight * 0.85); else box.scrollTop -= box.clientHeight * 0.85; return pos(); }
+if (op === 'step') {
+  const before = isPage ? scrollY : box.scrollTop;
+  if (isPage) scrollBy(0, Math.max(200, innerHeight * 0.8)); else box.scrollTop = before + Math.max(100, box.clientHeight * 0.8);
+  const p = pos(); p.moved = Math.round((isPage ? scrollY : box.scrollTop) - before); return p;
+}
+// read: rows in the DOM now, keyed by their row number when the grid gives one; a row split over pinned
+// column blocks (same row number in several containers) is joined back into one
+let head = [];
+const out = [], byKey = new Map();
+for (const r of tableRows(t)) {
+  if (!visible(r) && !(r.getAttribute('aria-rowindex') || r.getAttribute('row-index'))) continue;
+  const cells = rowCells(r).flatMap(c => [inlineText(c, false)].concat(Array(Math.max(0, (c.colSpan || 1) - 1)).fill('')));
+  if (!cells.length) continue;
+  if (isHeaderRow(r) || (t.tagName === 'TABLE' && t.tHead && t.tHead.contains(r))) {
+    if (!head.length || cells.join('').length > head.join('').length) head = cells;
+    continue;
+  }
+  const k = r.getAttribute('aria-rowindex') || r.getAttribute('row-index') || r.getAttribute('data-row-index') ||
+            r.getAttribute('data-sap-ui-rowindex') ||
+            r.getAttribute('data-rowindex') || r.getAttribute('data-index') || null;
+  if (k !== null && byKey.has(k)) { byKey.get(k).c.push(...cells); continue; }
+  const row = {k: k, c: cells};
+  if (k !== null) byKey.set(k, row);
+  out.push(row);
+}
+if (!head.length && out.length) head = splitHead(t, Math.max(...out.slice(0, 5).map(r => r.c.length)));
+return Object.assign(pos(), {head: head, rows: out});
+"""
+
 _JS_FIND = _JS_HELPERS + r"""
 const q = arguments[0].toLowerCase(), exact = arguments[1], limit = arguments[2];
 const res = [];
@@ -356,12 +505,31 @@ let last = Date.now();
 const obs = new MutationObserver(() => { last = Date.now(); });
 obs.observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
 const start = Date.now();
+// "busy" overlays and spinners (SAP UI5 busy indicators, SAP Ariba's wait panel, aria-busy, generic spinners)
+const BUSY = '[aria-busy="true"],.sapUiLocalBusyIndicator,.sapUiBusyIndicator,.sapMBusyIndicator,.sapMBusyDialog,' +
+  '.sapUiLocalBusy,#awwaitAlertDiv,.awwaitAlertDiv,.w-wait,.loading-indicator,.loadingIndicator,[class*="busy-indicator"],' +
+  '[class*="spinner"]:not(:has(input)),[class*="Spinner"]:not(:has(input)),[role="progressbar"]:not([aria-valuenow])';
+function busy() {
+  if (Date.now() - last > %BUSY_MAX%) return false;   // still for a long while: a decorative spinner, not loading
+  for (const el of document.querySelectorAll(BUSY)) {
+    if (el.matches('input,select,textarea,button')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 4 && r.height > 4) {
+      const s = getComputedStyle(el);
+      if (s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity || '1') > 0.05) return true;
+    }
+  }
+  return false;
+}
 (function tick() {
   const now = Date.now();
-  if ((document.readyState === 'complete' && now - last >= quiet) || now - start > max) { obs.disconnect(); done(true); }
+  if ((document.readyState === 'complete' && now - last >= quiet && !busy()) || now - start > max) { obs.disconnect(); done(true); }
   else setTimeout(tick, 100);
 })();
 """
+
+
+_JS_SETTLE = _JS_SETTLE.replace("%BUSY_MAX%", str(int(os.getenv("BUSY_MAX_MS", "6000") or 6000)))
 
 
 # ---------------------------------------------------------------------------------------------- browser
@@ -843,6 +1011,95 @@ class Browser:
         except (ValueError, WebDriverException):
             return 0
 
+    def lazy_info(self, index=0):
+        """Does the table look lazily loaded: in its own scrolling box, or with the page scrolling on past it?"""
+        with self.lock:
+            self._d()
+            info = self._js(_JS_LAZY, int(index), "info")
+            if info.get("error"):
+                raise BrowserError(info["error"])
+            lazy = bool(info["inner"] and not info["atEnd"]) or bool(info["inner"] and info.get("keyed")) or \
+                bool(info.get("more")) or \
+                (not info["inner"] and not info["atEnd"] and info["below"] < 1.5 * info["view"]) or \
+                bool(info.get("count") and info["count"] > info["rows"] + 1)
+            return dict(info, lazy=lazy)
+
+    def table_scrolled(self, index=0, max_rounds=None, max_rows=None, should_stop=None, on_progress=None):
+        """All rows of a table that loads as you scroll: start at the top, read the rows, scroll a screen,
+        wait for new rows, repeat until nothing new comes. Virtual grids (rows replaced while scrolling) are
+        handled by collecting rows as they pass, keyed by their row number."""
+        max_rounds = int(max_rounds or os.getenv("LAZY_MAX_SCROLLS", "200"))
+        max_rows = int(max_rows or os.getenv("TABLE_MAX_ROWS", "5000"))
+        with self.lock:
+            self._d()
+            self._js(_JS_LAZY, int(index), "top")
+            self._settle(300, 3000)
+            head, order, rows, keyed = [], [], {}, False
+            rounds, idle, clicks, reason = 0, 0, 0, f"reached {max_rounds} scrolls (LAZY_MAX_SCROLLS)"
+            last_height = None
+            while True:
+                if should_stop and should_stop():
+                    reason = "stopped by the user"
+                    break
+                r = self._js(_JS_LAZY, int(index), "read")
+                if r.get("error"):
+                    if rows:
+                        reason = "the table disappeared"
+                        break
+                    raise BrowserError(r["error"])
+                if r["head"] and len("".join(r["head"])) > len("".join(head)):
+                    head = r["head"]
+                new = 0
+                for row in r["rows"]:
+                    k = row["k"]
+                    if k is not None:
+                        keyed = True
+                        key = ("k", str(k))
+                    else:
+                        key = ("c",) + tuple(row["c"])
+                    if key not in rows:
+                        rows[key] = row["c"]
+                        order.append(key)
+                        new += 1
+                    elif len(row["c"]) > len(rows[key]):
+                        rows[key] = row["c"]          # more of the row has rendered now
+                if on_progress:
+                    on_progress(len(order), rounds)
+                if len(order) >= max_rows:
+                    reason = f"reached {max_rows} rows (TABLE_MAX_ROWS)"
+                    break
+                if rounds >= max_rounds:
+                    break
+                grew = last_height is not None and r["height"] > last_height
+                last_height = r["height"]
+                if new == 0 and r["atEnd"] and not grew:
+                    more = self._js(_JS_LAZY, int(index), "more")      # a "More [20/45]" / "Show more" control
+                    if more.get("clicked"):
+                        clicks += 1
+                        idle = 0
+                        rounds += 1
+                        self._settle(400, 8000)
+                        continue
+                    idle += 1
+                    if idle >= 2:                     # gave it two waits at the end: nothing more is coming
+                        reason = "reached the end of the list"
+                        break
+                else:
+                    idle = 0
+                self._js(_JS_LAZY, int(index), "step")
+                rounds += 1
+                # a grid with its own scrollbar usually redraws from data it already has: a short wait will do
+                self._settle(150 if r["inner"] and not r["atEnd"] else 350, 4000)
+                if r["atEnd"]:
+                    time.sleep(0.4)                   # at the bottom: give the next batch a moment
+            if keyed and all(k[1].lstrip("-").isdigit() for k in order):
+                order.sort(key=lambda k: int(k[1]))
+            body = [rows[k] for k in order][:max_rows]
+            width = max([len(head)] + [len(b) for b in body]) if body else len(head)
+            body = [b + [""] * (width - len(b)) for b in body]
+            return {"head": head, "rows": body, "scrolls": rounds, "stopped": reason, "keyed": keyed,
+                    "total": len(order), "more_clicks": clicks}
+
     def table(self, index=0, with_ids=False, max_rows=None):
         with self.lock:
             max_rows = int(max_rows or os.getenv("TABLE_MAX_ROWS", "5000"))
@@ -1074,8 +1331,75 @@ class Browser:
             self._settle()
             return f"Selected {option!r} in [{eid}]."
 
-    def scroll(self, direction="down", eid=None):
+    def scroll_to_end(self, table=None, eid=None, should_stop=None):
+        """Keep scrolling to the bottom (of the page, a table's box, or the box around element eid) until no more
+        content loads: for lists that add items as you scroll, so everything is on the page before reading it."""
+        max_rounds = int(os.getenv("LAZY_MAX_SCROLLS", "200"))
         with self.lock:
+            d = self._d()
+            if table is not None:
+                go = lambda: self._js(_JS_LAZY, int(table), "bottom")
+            else:
+                target = self._el(eid) if eid is not None else None
+                go = lambda: d.execute_script(r"""
+                  let n = arguments[0];
+                  for (; n && n !== document.body; n = n.parentElement) {
+                    const s = getComputedStyle(n);
+                    if (/(auto|scroll|overlay)/.test(s.overflowY) && n.scrollHeight > n.clientHeight + 4) break;
+                  }
+                  const box = (!n || n === document.body) ? (document.scrollingElement || document.documentElement) : n;
+                  box.scrollTop = box.scrollHeight;
+                  return {height: box.scrollHeight, inner: box !== document.scrollingElement};""", target)
+            first = last = None
+            rounds = idle = 0
+            while rounds < max_rounds and not (should_stop and should_stop()):
+                p = go() or {}
+                if p.get("error"):
+                    raise BrowserError(p["error"])
+                h = p.get("height") or 0
+                first = h if first is None else first
+                self._settle(400, 8000)
+                rounds += 1
+                if last is not None and h <= last:
+                    idle += 1
+                    if idle >= 2:
+                        break
+                else:
+                    idle = 0
+                last = h
+            grew = f"grew from {first:,} to {last:,} px" if last and first and last > first else "didn't grow"
+            return f"Scrolled to the end {rounds} times; the content {grew}. Everything that loads by scrolling is on the page now: read it with snapshot or extract_text."
+
+    def scroll(self, direction="down", eid=None, inside=False, table=None):
+        if str(direction) == "end":
+            return self.scroll_to_end(table=table, eid=eid if inside or table is None else None)
+        with self.lock:
+            if table is not None:
+                op = {"down": "step", "up": "up", "top": "top", "bottom": "bottom"}.get(str(direction), "step")
+                p = self._js(_JS_LAZY, int(table), op)
+                if p.get("error"):
+                    raise BrowserError(p["error"])
+                self._settle(400, 4000)
+                where = "its own scrolling box" if p["inner"] else "the page"
+                return (f"Scrolled table {table} {direction} ({where}): now at {p['top']} of {p['height']}px"
+                        + (", the end." if p["atEnd"] else "."))
+            if eid is not None and inside:
+                # scroll the scrolling box that holds this element (a list or grid with its own scrollbar)
+                el = self._el(eid)
+                moved = self.driver.execute_script(r"""
+                  let n = arguments[0];
+                  for (; n && n !== document.body; n = n.parentElement) {
+                    const s = getComputedStyle(n);
+                    if (/(auto|scroll|overlay)/.test(s.overflowY) && n.scrollHeight > n.clientHeight + 4) break;
+                  }
+                  if (!n || n === document.body) return null;
+                  const b = n.scrollTop, d = arguments[1];
+                  n.scrollTop = d === 'top' ? 0 : d === 'bottom' ? n.scrollHeight : b + (d === 'up' ? -1 : 1) * n.clientHeight * 0.85;
+                  return Math.round(n.scrollTop - b);""", el, str(direction))
+                if moved is None:
+                    raise BrowserError(f"[{eid}] isn't inside a scrolling box; use {{\"action\": \"scroll\", \"direction\": \"{direction}\"}} for the page.")
+                self._settle(400, 4000)
+                return f"Scrolled the box around [{eid}] {direction} ({moved:+d}px)."
             if eid is not None:
                 el = self._el(eid)
                 self.driver.execute_script("arguments[0].scrollIntoView({block:'center'})", el)

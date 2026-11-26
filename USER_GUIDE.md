@@ -173,6 +173,9 @@ Some data only lives on web pages: an MES or traceability screen, a machine's we
 
 - *"Go through every page of the table and save all rows."*
 - *"Expand all the 'Show more' rows, then save the table."*
+- *"Save the whole alarm list."* Lists that load more as you scroll down, and grids with their own scrollbar that only show a screenful at a time, are scrolled through to the end and saved in full. This can take a while for thousands of rows; **Stop** ends it and keeps what was collected.
+- *"Keep pressing Load more and save all rows."*
+- **SAP Ariba, SuccessFactors, Fiori:** *"Open My Requisitions, open PR1234 and save all its line items."* The AI clicks the tiles and links, waits while the page shows *Please wait* or a busy spinner, and saves every line, also lines that only appear as you scroll or after pressing *More*. Turn on **Visual mode** (with a model that reads images) if it has trouble finding a tile.
 - *"Open LOT-4471 and tell me the reflow peak."*
 - *"Set the range to Last 7 days and save the alarm table."*
 
